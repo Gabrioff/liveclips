@@ -1,729 +1,755 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Music2, Home, Search, Loader2, AlertTriangle, Copy, Play, Pause, 
-  User as UserIcon, Hash, Bell, ArrowLeft, Edit3, Camera, Check, X, 
-  LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle, User
-} from 'lucide-react';
-import { initializeApp } from "firebase/app";
-import { 
-  getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
-  onAuthStateChanged, signOut, updateProfile
-} from "firebase/auth";
-import { 
-  getFirestore, collection, doc, onSnapshot, addDoc, getDoc, setDoc, 
-  updateDoc, increment, query, orderBy, deleteDoc, where, limit, serverTimestamp
-} from "firebase/firestore";
-
-// --- CONFIGURACIÓN ---
-const firebaseConfig = {
-  apiKey: "AIzaSyCqOTWcQ4uOC851_-j4JBUcENkCa-9xWdE",
-  authDomain: "liveclips-93af8.firebaseapp.com",
-  projectId: "liveclips-93af8",
-  storageBucket: "liveclips-93af8.firebasestorage.app",
-  messagingSenderId: "1075447494440",
-  appId: "1:1075447494440:web:471562928542e95839021d",
-  measurementId: "G-0ZC5V02V76"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = 'tiktok-glass-universal';
-
-// --- TUS ICONOS ORIGINALES ---
-const ICONS = {
-  bandeja: "https://img.icons8.com/?size=100&id=JKQ8C03mfHVD&format=png&color=000000",
-  perfil: "https://img.icons8.com/?size=100&id=AaFA8C8mpiZY&format=png&color=000000",
-  corazon: "https://img.icons8.com/?size=100&id=sSZiheZL0ozl&format=png&color=000000",
-  tendencia: "https://img.icons8.com/?size=100&id=g8O1NN7oS0KJ&format=png&color=000000",
-  // Eliminamos comentarios porque pediste quitarlos
-  compartir: "https://img.icons8.com/?size=100&id=Wv2O2Ve44Are&format=png&color=000000",
-  crear: "https://img.icons8.com/?size=100&id=rrOG2bhnvx0w&format=png&color=000000" 
-};
-
-const uploadToGitHub = async (file, path, setStatus) => {
-  const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'github');
-  const configSnap = await getDoc(configRef);
-  if (!configSnap.exists()) throw new Error("Falta configuración GitHub");
-  const { token, owner, repo } = configSnap.data();
-  setStatus && setStatus("Procesando...");
-  const toBase64 = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result.split(',')[1]);
-    reader.onerror = reject;
-  });
-  const content = await toBase64(file);
-  setStatus && setStatus("Subiendo...");
-  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
-    method: 'PUT',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: `Upload ${path}`, content: content, encoding: 'base64' })
-  });
-  if (!response.ok) throw new Error("Error GitHub");
-  return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
-};
-
-// --- UTILIDADES CHAT ---
-// Genera ID único para el chat entre dos usuarios (siempre igual independientemente de quién inicie)
-const getChatId = (uid1, uid2) => [uid1, uid2].sort().join('_');
-
-// --- PANTALLAS ---
-
-const AuthScreen = () => {
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const handleAuth = async (e) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-    const email = `${username.toLowerCase().replace(/\s/g, '')}@liveclips.internal`;
-    try {
-      if (isRegistering) {
-        const uc = await createUserWithEmailAndPassword(auth, email, password);
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uc.user.uid), {
-            displayName: username, username, photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${uc.user.uid}`,
-            bio: "Hola, soy nuevo aquí.", createdAt: new Date().toISOString(), stats: { followers: 0, following: 0, likes: 0 }
-        });
-        await updateProfile(uc.user, { displayName: username });
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
-      }
-    } catch (err) { setError(err.message); }
-    setLoading(false);
-  };
-
-  return (
-    <div className="flex flex-col items-center justify-center h-screen bg-gray-950 text-white p-6 relative overflow-hidden">
-      <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-gray-900 z-0"></div>
-      <div className="z-10 w-full max-w-sm bg-gray-900/80 backdrop-blur-xl border border-gray-700 p-8 rounded-3xl shadow-2xl">
-        <div className="flex flex-col items-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">LiveClips</h1>
-          <p className="text-gray-400 text-sm">Tu mundo en video</p>
-        </div>
-        <form onSubmit={handleAuth} className="space-y-4">
-          <input type="text" placeholder="Usuario" className="w-full bg-gray-800 text-white p-4 rounded-xl border border-gray-600 outline-none focus:border-white transition" value={username} onChange={(e) => setUsername(e.target.value)} />
-          <input type="password" placeholder="Contraseña" className="w-full bg-gray-800 text-white p-4 rounded-xl border border-gray-600 outline-none focus:border-white transition" value={password} onChange={(e) => setPassword(e.target.value)} />
-          {error && <p className="text-red-400 text-xs">{error}</p>}
-          <button type="submit" disabled={loading} className="w-full bg-white hover:bg-gray-200 text-black font-bold py-4 rounded-xl transition flex justify-center">{loading ? <Loader2 className="animate-spin" /> : (isRegistering ? "Registrarse" : "Entrar")}</button>
-        </form>
-        <p className="mt-6 text-center text-sm text-gray-400 cursor-pointer hover:text-white transition" onClick={() => setIsRegistering(!isRegistering)}>{isRegistering ? "¿Ya tienes cuenta?" : "Crear cuenta nueva"}</p>
-      </div>
-    </div>
-  );
-};
-
-const VideoPlayer = ({ video, isActive, toggleLike, onShare, onVisitProfile }) => {
-  const videoRef = useRef(null);
-  const [playing, setPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [buffering, setBuffering] = useState(false);
-
-  useEffect(() => {
-    const videoEl = videoRef.current;
-    if (!videoEl) return;
-
-    if (isActive) {
-      // Autoplay agresivo
-      const playPromise = videoEl.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-             setPlaying(true);
-             videoEl.muted = false;
-          })
-          .catch(() => {
-             videoEl.muted = true;
-             videoEl.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-          });
-      }
-    } else {
-      videoEl.pause();
-      videoEl.currentTime = 0;
-      setPlaying(false);
-    }
-  }, [isActive]);
-
-  useEffect(() => {
-      const el = videoRef.current;
-      if(!el) return;
-      const wait = () => setBuffering(true);
-      const play = () => setBuffering(false);
-      el.addEventListener('waiting', wait);
-      el.addEventListener('playing', play);
-      return () => { el.removeEventListener('waiting', wait); el.removeEventListener('playing', play); };
-  }, []);
-
-  const togglePlay = () => {
-    const el = videoRef.current;
-    if(!el) return;
-    if(el.paused) { el.play(); setPlaying(true); } else { el.pause(); setPlaying(false); }
-  };
-
-  const handleTime = () => {
-    if(videoRef.current) setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100);
-  };
-
-  const actionBtnClass = "p-2 bg-gray-800/80 rounded-xl border border-gray-600 backdrop-blur-md transition-all active:scale-90 hover:bg-gray-700 hover:border-gray-400 shadow-lg";
-
-  return (
-    <div className="relative w-full h-full snap-start bg-gray-900 overflow-hidden">
-      <video
-        ref={videoRef}
-        src={video.url}
-        className="w-full h-full object-cover opacity-90"
-        loop
-        playsInline
-        onClick={togglePlay}
-        onTimeUpdate={handleTime}
-      />
-      
-      {buffering && <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none"><Loader2 size={50} className="text-white/50 animate-spin"/></div>}
-      
-      {!playing && !buffering && (
-        <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
-           <div className="bg-white/10 backdrop-blur-md p-6 rounded-full border border-white/20 shadow-xl">
-             <Play size={40} className="text-white fill-white opacity-80" />
-           </div>
-        </div>
-      )}
-
-      <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-800/50 z-30">
-        <div className="h-full bg-white transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(255,255,255,0.5)]" style={{ width: `${progress}%` }} />
-      </div>
-
-      {/* BARRA LATERAL SIN COMENTARIOS */}
-      <div className="absolute right-2 bottom-28 flex flex-col items-center gap-5 z-30">
-        <div onClick={() => onVisitProfile(video.authorId)} className="relative cursor-pointer transition-transform active:scale-90 mb-2">
-          <div className="w-12 h-12 rounded-full border-2 border-white p-0.5 overflow-hidden bg-gray-800 shadow-lg">
-            <img src={video.authorAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${video.authorId}`} className="w-full h-full object-cover" />
-          </div>
-          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-pink-500 rounded-full w-5 h-5 flex items-center justify-center shadow-md ring-2 ring-gray-900">
-            <span className="text-white text-[10px] font-bold">+</span>
-          </div>
-        </div>
-
-        <button onClick={() => toggleLike(video)} className="flex flex-col items-center gap-1 group">
-          <div className={actionBtnClass}>
-             <img src={ICONS.corazon} className={`w-7 h-7 transition-all duration-300 drop-shadow-lg ${video.liked ? 'filter-red' : 'invert opacity-90'}`} />
-          </div>
-          <span className="text-white text-xs font-medium drop-shadow-md">{video.likes}</span>
-        </button>
-
-        <button onClick={() => onShare(video.url)} className="flex flex-col items-center gap-1 group">
-           <div className={actionBtnClass}>
-             <img src={ICONS.compartir} className="w-7 h-7 invert opacity-90 drop-shadow-lg" />
-           </div>
-           <span className="text-white text-xs font-medium drop-shadow-md">Share</span>
-        </button>
-
-        <div className={`mt-2 w-12 h-12 rounded-full bg-gray-800 border-[3px] border-gray-700 flex items-center justify-center overflow-hidden ${playing ? 'animate-spin-slow' : ''} shadow-lg`}>
-            <div className="w-full h-full bg-gradient-to-br from-gray-700 to-black flex items-center justify-center">
-                <Music2 size={14} className="text-white drop-shadow-md" />
-            </div>
-        </div>
-      </div>
-
-      <div className="absolute bottom-24 left-4 right-20 z-20 text-white pointer-events-none">
-        <h3 className="font-bold text-lg drop-shadow-lg mb-2 text-gray-100 cursor-pointer pointer-events-auto w-fit" onClick={() => onVisitProfile(video.authorId)}>@{video.authorName}</h3>
-        <p className="text-sm drop-shadow-md line-clamp-2 mb-4 text-gray-200 font-light leading-relaxed">{video.description}</p>
-        <div className="flex items-center gap-2 text-xs font-medium bg-white/5 border border-white/10 w-fit px-4 py-2 rounded-full backdrop-blur-md shadow-sm">
-          <Music2 size={12} />
-          <span className="animate-marquee whitespace-nowrap max-w-[150px] overflow-hidden text-ellipsis">Sonido original - {video.authorName}</span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const ProfileView = ({ targetUserId, currentUser, videos, onBack, onVideoClick, onLogout, onChat }) => {
-  const [profile, setProfile] = useState(null);
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  
-  const isMyProfile = targetUserId === currentUser.uid;
-  const userVideos = videos.filter(v => v.authorId === targetUserId);
-
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId), (s) => {
-       if (s.exists()) setProfile(s.data());
-    });
-    if (!isMyProfile) {
-        const checkFollow = onSnapshot(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'following', targetUserId), (s) => {
-            setIsFollowing(s.exists());
-        });
-        return () => { unsub(); checkFollow(); };
-    }
-    return () => unsub();
-  }, [targetUserId, currentUser]);
-
-  const handleFollow = async () => {
-    const myRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'following', targetUserId);
-    const targetPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId);
-    const myPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.uid);
-
-    if (isFollowing) {
-        await deleteDoc(myRef);
-        await updateDoc(targetPublicRef, { "stats.followers": increment(-1) });
-        await updateDoc(myPublicRef, { "stats.following": increment(-1) });
-    } else {
-        await setDoc(myRef, { since: new Date().toISOString() });
-        await updateDoc(targetPublicRef, { "stats.followers": increment(1) });
-        await updateDoc(myPublicRef, { "stats.following": increment(1) });
-    }
-  };
-
-  return (
-    <div className="w-full h-full bg-gray-900 pt-14 overflow-y-auto pb-24 animate-in slide-in-from-right">
-       {!isMyProfile && (
-           <div className="absolute top-0 left-0 w-full p-4 flex items-center gap-4 bg-gray-900/80 backdrop-blur-md z-40 border-b border-white/5">
-               <button onClick={onBack}><ArrowLeft className="text-white"/></button>
-               <span className="font-bold text-white">{profile?.displayName}</span>
-           </div>
-       )}
-
-       <div className="flex flex-col items-center justify-center mb-6 px-4 mt-4">
-          <div className="w-24 h-24 rounded-full border-2 border-gray-700 p-1 mb-3">
-             <img src={profile?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${targetUserId}`} className="w-full h-full rounded-full bg-gray-800 object-cover" />
-          </div>
-          <h2 className="text-lg font-bold text-white">@{profile?.username || "Usuario"}</h2>
-          <p className="text-sm text-gray-400 text-center mt-1">{profile?.bio || "Sin biografía"}</p>
-          
-          <div className="flex items-center gap-8 mt-6 text-center">
-             <div><div className="font-bold text-white text-lg">{profile?.stats?.following || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Siguiendo</div></div>
-             <div><div className="font-bold text-white text-lg">{profile?.stats?.followers || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Seguidores</div></div>
-             <div><div className="font-bold text-white text-lg">{profile?.stats?.likes || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Likes</div></div>
-          </div>
-          
-          <div className="flex gap-2 mt-6 w-full max-w-xs px-4">
-             {isMyProfile ? (
-                 <>
-                    <button onClick={() => setIsEditing(true)} className="flex-1 py-2 bg-gray-800 text-white text-sm font-bold rounded-lg border border-gray-600">Editar Perfil</button>
-                    <button onClick={onLogout} className="w-10 flex items-center justify-center bg-gray-800 text-white rounded-lg border border-gray-600"><LogOut size={16}/></button>
-                 </>
-             ) : (
-                 <>
-                    <button 
-                        onClick={handleFollow}
-                        className={`flex-1 py-2 text-white text-sm font-bold rounded-lg border transition-all flex items-center justify-center gap-2
-                        ${isFollowing ? 'bg-gray-800 border-gray-600' : 'bg-white text-black hover:bg-gray-200'}`}
-                    >
-                        {isFollowing ? <><UserCheck size={16}/> Siguiendo</> : <><UserPlus size={16}/> Seguir</>}
-                    </button>
-                    <button onClick={() => onChat(targetUserId, profile)} className="w-12 flex items-center justify-center bg-gray-800 text-white rounded-lg border border-gray-600">
-                        <MessageCircle size={18}/>
-                    </button>
-                 </>
-             )}
-          </div>
-       </div>
-
-       <div className="border-t border-gray-800 w-full bg-gray-900 min-h-[300px]">
-          <div className="grid grid-cols-3 gap-0.5">
-             {userVideos.map((video, idx) => (
-                <div key={video.id} onClick={() => onVideoClick(video.id)} className="relative aspect-[3/4] bg-gray-800 cursor-pointer overflow-hidden">
-                   <video src={video.url} className="w-full h-full object-cover opacity-90 hover:opacity-100 transition" />
-                   <div className="absolute bottom-1 left-1 flex items-center gap-1 text-[10px] text-white font-bold drop-shadow-md">
-                      <Play size={10} fill="white"/> {video.likes || 0}
-                   </div>
-                </div>
-             ))}
-          </div>
-       </div>
-       
-       {isMyProfile && <EditProfileModal isOpen={isEditing} onClose={() => setIsEditing(false)} user={currentUser} profile={profile} onUpdate={()=>{}} />}
-    </div>
-  );
-};
-
-const EditProfileModal = ({ isOpen, onClose, user, profile, onUpdate }) => {
-  const [displayName, setDisplayName] = useState("");
-  const [bio, setBio] = useState("");
-  const [loading, setLoading] = useState(false);
-  useEffect(() => { if(profile) { setDisplayName(profile.displayName||""); setBio(profile.bio||""); } }, [profile]);
-  
-  const handleSave = async () => {
-    setLoading(true);
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), { displayName, bio });
-    setLoading(false); onClose();
-  };
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
-      <div className="bg-gray-900 w-full max-w-xs rounded-xl p-6 border border-gray-700">
-        <h3 className="text-white font-bold mb-4">Editar Perfil</h3>
-        <input value={displayName} onChange={e => setDisplayName(e.target.value)} className="w-full bg-gray-800 text-white p-3 rounded-lg mb-3 outline-none" placeholder="Nombre" />
-        <textarea value={bio} onChange={e => setBio(e.target.value)} className="w-full bg-gray-800 text-white p-3 rounded-lg mb-4 outline-none" placeholder="Bio" rows={3} />
-        <button onClick={handleSave} disabled={loading} className="w-full bg-white text-black font-bold py-3 rounded-lg">{loading?"Guardando...":"Guardar"}</button>
-        <button onClick={onClose} className="w-full text-gray-400 text-sm mt-3">Cancelar</button>
-      </div>
-    </div>
-  );
-};
-
-const UploadModal = ({ isOpen, onClose, user }) => {
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [desc, setDesc] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("");
-
-  const handleFile = (e) => { const f = e.target.files[0]; if(f) { setFile(f); setPreview(URL.createObjectURL(f)); }};
-  const handleUpload = async () => {
-    if(!file) return;
-    setLoading(true);
-    try {
-        const path = `videos/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
-        const url = await uploadToGitHub(file, path, setStatus);
-        const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), {
-            url, authorId: user.uid, authorName: userData.displayName, authorAvatar: userData.photoURL,
-            description: desc, likes: 0, commentsCount: 0, createdAt: new Date().toISOString()
-        });
-        onClose(); setFile(null); setPreview(null); setDesc("");
-    } catch(e) { setStatus("Error: " + e.message); }
-    setLoading(false);
-  };
-
-  if(!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-50 bg-gray-900/95 backdrop-blur-xl flex flex-col animate-in fade-in">
-        <div className="p-4 flex justify-between items-center border-b border-gray-700">
-            <button onClick={onClose}><X className="text-gray-400 hover:text-white"/></button>
-            <h3 className="text-white font-bold flex items-center gap-2"><img src={ICONS.crear} className="w-6 h-6 invert"/> Nuevo Video</h3>
-            <div className="w-6"></div>
-        </div>
-        <div className="flex-1 p-6 flex flex-col items-center justify-center">
-            {!preview ? (
-                <label className="w-full h-64 border-2 border-dashed border-gray-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-gray-400 bg-gray-800/30">
-                    <div className="p-4 rounded-full bg-gray-700 mb-3"><img src={ICONS.crear} className="w-8 h-8 invert opacity-70"/></div>
-                    <span className="text-gray-400 font-medium">Seleccionar video</span>
-                    <input type="file" accept="video/*" className="hidden" onChange={handleFile}/>
-                </label>
-            ) : (
-                <div className="relative w-full h-64 bg-black rounded-2xl overflow-hidden border border-gray-700">
-                    <video src={preview} className="w-full h-full object-contain"/>
-                    <button onClick={()=>{setPreview(null);setFile(null)}} className="absolute top-2 right-2 bg-black/50 p-1.5 rounded-full text-white hover:bg-black/80"><X size={16}/></button>
-                </div>
-            )}
-            <textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Añade una descripción..." className="w-full bg-gray-900 text-white p-4 rounded-xl mt-6 h-24 outline-none resize-none border border-gray-700 focus:border-gray-500"/>
-            {status && <p className="text-cyan-400 text-sm mt-2 animate-pulse">{status}</p>}
-            <button disabled={loading||!file} onClick={handleUpload} className="w-full bg-white text-black font-bold py-3.5 rounded-xl mt-auto mb-4 disabled:opacity-50 hover:bg-gray-200 transition shadow-lg">{loading?"Publicando...":"Publicar Video"}</button>
-        </div>
-    </div>
-  );
-};
-
-const TrendsView = ({ videos, onVideoClick }) => {
-  const [search, setSearch] = useState("");
-  const filteredVideos = videos.filter(v => 
-    (v.description || "").toLowerCase().includes(search.toLowerCase()) ||
-    (v.authorName || v.author || "").toLowerCase().includes(search.toLowerCase())
-  );
-  return (
-    <div className="w-full h-full bg-gray-900 pt-16 px-4 overflow-y-auto pb-24">
-      <div className="relative mb-6">
-        <input type="text" placeholder="Buscar tendencias..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-gray-800 text-white p-3 pl-10 rounded-xl border border-gray-700 outline-none" />
-        <Search className="absolute left-3 top-3.5 text-gray-500" size={18} />
-      </div>
-      <h3 className="font-bold text-white mb-4 flex items-center gap-2"><Hash className="text-cyan-400" size={18} /> Videos Populares</h3>
-      <div className="grid grid-cols-2 gap-2">
-        {filteredVideos.map(video => (
-           <div key={video.id} onClick={() => onVideoClick(video)} className="relative aspect-[9/16] bg-gray-800 rounded-xl overflow-hidden cursor-pointer group shadow-lg border border-gray-800">
-              <video src={video.url} className="w-full h-full object-cover opacity-80" muted />
-              <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                <p className="text-xs font-bold text-white truncate">@{video.authorName}</p>
-              </div>
-           </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-const InboxView = ({ user, onRequestChat, onOpenChat }) => {
-  const [chats, setChats] = useState([]);
-  const [tab, setTab] = useState('chats'); // chats | requests
-
-  useEffect(() => {
-    if (!user) return;
-    // Query chats where user is participant
-    // (Note: In production this needs composite index or 'array-contains', we use client side filter for this demo if array-contains fails or structured differently)
-    // Since array-contains 'request.auth.uid' is valid:
-    const q = query(collection(db, 'artifacts', appId, 'chats'), where('participants', 'array-contains', user.uid));
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LiveClips</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Importante: Cargamos Babel para traducir React en el navegador -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    const unsub = onSnapshot(q, (snap) => {
-        const allChats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setChats(allChats);
-    });
-    return () => unsub();
-  }, [user]);
+    <style>
+        /* Estilos globales y correcciones para móvil */
+        body { background-color: #000; color: white; overflow: hidden; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .animate-spin-slow { animation: spin 4s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .filter-red { filter: invert(27%) sepia(51%) saturate(2878%) hue-rotate(346deg) brightness(104%) contrast(97%); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-  const myChats = chats.filter(c => c.status === 'accepted');
-  const requests = chats.filter(c => c.status === 'pending' && c.targetId === user.uid);
-
-  const handleAccept = async (chatId) => {
-      await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted' });
-  };
-
-  return (
-    <div className="w-full h-full bg-gray-900 pt-16 px-4 overflow-y-auto pb-24">
-      <div className="flex gap-4 mb-6 border-b border-gray-800 pb-2">
-          <button onClick={() => setTab('chats')} className={`text-sm font-bold pb-2 ${tab==='chats'?'text-white border-b-2 border-white':'text-gray-500'}`}>Mensajes</button>
-          <button onClick={() => setTab('requests')} className={`text-sm font-bold pb-2 ${tab==='requests'?'text-white border-b-2 border-white':'text-gray-500'}`}>Solicitudes {requests.length > 0 && <span className="text-red-500">({requests.length})</span>}</button>
-      </div>
-
-      <div className="space-y-2">
-        {tab === 'chats' ? (
-            myChats.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes mensajes</div> :
-            myChats.map(chat => {
-                const otherName = chat.participantsData?.[chat.participants.find(uid => uid !== user.uid)]?.displayName || "Usuario";
-                return (
-                    <div key={chat.id} onClick={() => onOpenChat(chat.id)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800">
-                        <div className="w-12 h-12 rounded-full bg-gray-700 flex items-center justify-center text-white font-bold">{otherName[0]}</div>
-                        <div className="flex-1">
-                            <p className="font-bold text-white">{otherName}</p>
-                            <p className="text-xs text-gray-400">Toca para chatear</p>
-                        </div>
-                    </div>
-                )
-            })
-        ) : (
-            requests.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes solicitudes</div> :
-            requests.map(req => (
-                <div key={req.id} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800">
-                    <div className="flex-1">
-                        <p className="font-bold text-white">Solicitud de mensaje</p>
-                        <p className="text-xs text-gray-400">Alguien quiere chatear contigo</p>
-                    </div>
-                    <button onClick={() => handleAccept(req.id)} className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-xs font-bold">Aceptar</button>
-                </div>
-            ))
-        )}
-      </div>
-    </div>
-  );
-};
-
-const ChatScreen = ({ chatId, user, onClose }) => {
-    const [messages, setMessages] = useState([]);
-    const [txt, setTxt] = useState("");
-    const endRef = useRef(null);
-
-    useEffect(() => {
-        if(!chatId) return;
-        const q = query(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), orderBy('createdAt', 'asc'));
-        const unsub = onSnapshot(q, s => {
-            setMessages(s.docs.map(d => d.data()));
-            setTimeout(() => endRef.current?.scrollIntoView({behavior:'smooth'}), 100);
-        });
-        return () => unsub();
-    }, [chatId]);
-
-    const send = async () => {
-        if(!txt.trim()) return;
-        await addDoc(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), {
-            text: txt, senderId: user.uid, createdAt: new Date().toISOString()
-        });
-        setTxt("");
-    };
-
-    return (
-        <div className="absolute inset-0 z-50 bg-gray-900 flex flex-col animate-in slide-in-from-right">
-            <div className="p-4 bg-gray-900 border-b border-gray-800 flex items-center gap-4">
-                <button onClick={onClose}><ArrowLeft className="text-white"/></button>
-                <span className="font-bold text-white">Chat</span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {messages.map((m, i) => {
-                    const isMe = m.senderId === user.uid;
-                    return (
-                        <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-[70%] p-3 rounded-2xl text-sm ${isMe ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-white'}`}>
-                                {m.text}
-                            </div>
-                        </div>
-                    )
-                })}
-                <div ref={endRef}/>
-            </div>
-            <div className="p-3 bg-gray-900 border-t border-gray-800 flex gap-2">
-                <input value={txt} onChange={e=>setTxt(e.target.value)} className="flex-1 bg-gray-800 text-white p-3 rounded-full outline-none" placeholder="Mensaje..." onKeyDown={e=>e.key==='Enter'&&send()}/>
-                <button onClick={send} className="p-3 bg-cyan-600 rounded-full text-white"><Send size={18}/></button>
-            </div>
-        </div>
-    );
-};
-
-// --- APP PRINCIPAL ---
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [videos, setVideos] = useState([]);
-  const [activeTab, setActiveTab] = useState('home');
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [showUpload, setShowUpload] = useState(false);
-  const [viewingProfile, setViewingProfile] = useState(null);
-  const [activeChatId, setActiveChatId] = useState(null);
-  
-  const [feedMode, setFeedMode] = useState('global');
-  const [profileFeedVideos, setProfileFeedVideos] = useState([]);
-
-  const feedRef = useRef(null);
-
-  useEffect(() => onAuthStateChanged(auth, setUser), []);
-
-  useEffect(() => {
-    if(!user) return;
-    const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), orderBy('createdAt', 'desc'));
-    return onSnapshot(q, s => setVideos(s.docs.map(d => ({id: d.id, ...d.data()}))));
-  }, [user]);
-
-  const handleScroll = () => {
-    if (feedRef.current && activeTab === 'home') {
-      const idx = Math.round(feedRef.current.scrollTop / feedRef.current.clientHeight);
-      if (idx !== currentIndex) setCurrentIndex(idx);
-    }
-  };
-
-  const toggleLike = async (video) => {
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), { likes: increment(1) });
-  };
-
-  const goToProfile = (uid) => {
-      setViewingProfile(uid);
-      setActiveTab('profile');
-  };
-
-  const openProfileVideo = (videoId) => {
-      const userVids = videos.filter(v => v.authorId === (viewingProfile || user.uid));
-      const idx = userVids.findIndex(v => v.id === videoId);
-      setProfileFeedVideos(userVids);
-      setFeedMode('profile');
-      setActiveTab('home');
-      setCurrentIndex(idx);
-      setTimeout(() => feedRef.current?.scrollTo({top: idx * feedRef.current.clientHeight, behavior: 'auto'}), 0);
-  };
-
-  const goHome = () => {
-      setFeedMode('global');
-      setActiveTab('home');
-      setViewingProfile(null);
-  };
-
-  const startChat = async (targetUid, targetProfile) => {
-      // 1. Check if chat exists
-      const chatId = getChatId(user.uid, targetUid);
-      const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
-      const chatSnap = await getDoc(chatRef);
-
-      if (chatSnap.exists()) {
-          if (chatSnap.data().status === 'accepted') {
-              setActiveChatId(chatId); // Open chat
-          } else {
-              alert("Solicitud pendiente...");
-          }
-      } else {
-          // Create request
-          await setDoc(chatRef, {
-              participants: [user.uid, targetUid],
-              participantsData: {
-                  [user.uid]: { displayName: user.displayName || "Usuario" },
-                  [targetUid]: { displayName: targetProfile.displayName || "Usuario" }
-              },
-              status: 'pending',
-              targetId: targetUid,
-              createdAt: new Date().toISOString()
-          });
-          alert("Solicitud enviada");
-      }
-  };
-
-  const currentFeedVideos = feedMode === 'global' ? videos : profileFeedVideos;
-
-  if(!user) return <AuthScreen />;
-
-  return (
-    <div className="flex justify-center bg-black h-screen w-full font-sans text-white select-none">
-      <div className="relative w-full max-w-md h-full bg-gray-900 shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col border-x border-gray-800 overflow-hidden">
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18.2.0';
+        import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
+        import { 
+            Music2, Home, Search, Loader2, AlertTriangle, Copy, Play, Pause, 
+            User as UserIcon, Hash, Bell, ArrowLeft, Edit3, Camera, Check, X, 
+            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle
+        } from 'https://esm.sh/lucide-react@0.344.0';
         
-        {activeTab === 'home' && (
-            <div className="absolute top-0 w-full p-4 pt-8 z-30 flex justify-center gap-4 bg-gradient-to-b from-gray-900/80 to-transparent pointer-events-none backdrop-blur-[1px]">
-                <span className={`font-bold text-base cursor-pointer pointer-events-auto ${feedMode==='profile'?'text-gray-400':'text-white border-b-2 border-white pb-1'}`} onClick={goHome}>Para Ti</span>
-                {feedMode === 'profile' && <span className="font-bold text-white border-b-2 pointer-events-auto pb-1">Viendo Perfil</span>}
-            </div>
-        )}
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { 
+            getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
+            onAuthStateChanged, signOut, updateProfile
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { 
+            getFirestore, collection, doc, onSnapshot, addDoc, getDoc, setDoc, 
+            updateDoc, increment, query, orderBy, deleteDoc, where, limit, serverTimestamp
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        <div ref={feedRef} onScroll={handleScroll} className={`flex-1 overflow-y-auto snap-y snap-mandatory no-scrollbar bg-gray-900 ${activeTab !== 'home' ? 'hidden' : ''}`}>
-            {currentFeedVideos.length > 0 ? currentFeedVideos.map((v, i) => (
-                <VideoPlayer 
-                    key={v.id} 
-                    video={v} 
-                    isActive={i === currentIndex && activeTab === 'home'} 
-                    toggleLike={toggleLike} 
-                    onComment={()=>{}} // Deshabilitado
-                    onShare={()=>{}} 
-                    onVisitProfile={goToProfile}
+        // --- CONFIGURACIÓN FIREBASE ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyCqOTWcQ4uOC851_-j4JBUcENkCa-9xWdE",
+            authDomain: "liveclips-93af8.firebaseapp.com",
+            projectId: "liveclips-93af8",
+            storageBucket: "liveclips-93af8.firebasestorage.app",
+            messagingSenderId: "1075447494440",
+            appId: "1:1075447494440:web:471562928542e95839021d",
+            measurementId: "G-0ZC5V02V76"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = 'tiktok-glass-universal';
+
+        // --- TUS ICONOS ORIGINALES ---
+        const ICONS = {
+            bandeja: "https://img.icons8.com/?size=100&id=JKQ8C03mfHVD&format=png&color=000000",
+            perfil: "https://img.icons8.com/?size=100&id=AaFA8C8mpiZY&format=png&color=000000",
+            corazon: "https://img.icons8.com/?size=100&id=sSZiheZL0ozl&format=png&color=000000",
+            tendencia: "https://img.icons8.com/?size=100&id=g8O1NN7oS0KJ&format=png&color=000000",
+            comentarios: "https://img.icons8.com/?size=100&id=852Ge3pUkTzb&format=png&color=000000",
+            compartir: "https://img.icons8.com/?size=100&id=Wv2O2Ve44Are&format=png&color=000000",
+            crear: "https://img.icons8.com/?size=100&id=rrOG2bhnvx0w&format=png&color=000000" 
+        };
+
+        const uploadToGitHub = async (file, path, setStatus) => {
+            const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'github');
+            const configSnap = await getDoc(configRef);
+            if (!configSnap.exists()) throw new Error("Falta configuración GitHub");
+            const { token, owner, repo } = configSnap.data();
+            setStatus && setStatus("Procesando...");
+            const toBase64 = (file) => new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+            });
+            const content = await toBase64(file);
+            setStatus && setStatus("Subiendo...");
+            const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: `Upload ${path}`, content: content, encoding: 'base64' })
+            });
+            if (!response.ok) throw new Error("Error GitHub");
+            return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
+        };
+
+        const getChatId = (uid1, uid2) => [uid1, uid2].sort().join('_');
+
+        // --- COMPONENTES ---
+
+        const AuthScreen = () => {
+            const [isRegistering, setIsRegistering] = useState(false);
+            const [username, setUsername] = useState("");
+            const [password, setPassword] = useState("");
+            const [error, setError] = useState("");
+            const [loading, setLoading] = useState(false);
+
+            const handleAuth = async (e) => {
+                e.preventDefault();
+                setError("");
+                setLoading(true);
+                const email = `${username.toLowerCase().replace(/\s/g, '')}@liveclips.internal`;
+                try {
+                if (isRegistering) {
+                    const uc = await createUserWithEmailAndPassword(auth, email, password);
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uc.user.uid), {
+                        displayName: username, username, photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${uc.user.uid}`,
+                        bio: "Hola, soy nuevo aquí.", createdAt: new Date().toISOString(), stats: { followers: 0, following: 0, likes: 0 }
+                    });
+                    await updateProfile(uc.user, { displayName: username });
+                } else {
+                    await signInWithEmailAndPassword(auth, email, password);
+                }
+                } catch (err) { setError(err.message); }
+                setLoading(false);
+            };
+
+            return (
+                <div className="flex flex-col items-center justify-center h-screen bg-gray-950 text-white p-6 relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-gray-900 z-0"></div>
+                <div className="z-10 w-full max-w-sm bg-gray-900/80 backdrop-blur-xl border border-gray-700 p-8 rounded-3xl shadow-2xl">
+                    <div className="flex flex-col items-center mb-8">
+                    <h1 className="text-3xl font-bold text-white mb-2">LiveClips</h1>
+                    <p className="text-gray-400 text-sm">Tu mundo en video</p>
+                    </div>
+                    <form onSubmit={handleAuth} className="space-y-4">
+                    <input type="text" placeholder="Usuario" className="w-full bg-gray-800 text-white p-4 rounded-xl border border-gray-600 outline-none focus:border-white transition" value={username} onChange={(e) => setUsername(e.target.value)} />
+                    <input type="password" placeholder="Contraseña" className="w-full bg-gray-800 text-white p-4 rounded-xl border border-gray-600 outline-none focus:border-white transition" value={password} onChange={(e) => setPassword(e.target.value)} />
+                    {error && <p className="text-red-400 text-xs">{error}</p>}
+                    <button type="submit" disabled={loading} className="w-full bg-white hover:bg-gray-200 text-black font-bold py-4 rounded-xl transition flex justify-center">{loading ? <Loader2 className="animate-spin" /> : (isRegistering ? "Registrarse" : "Entrar")}</button>
+                    </form>
+                    <p className="mt-6 text-center text-sm text-gray-400 cursor-pointer hover:text-white transition" onClick={() => setIsRegistering(!isRegistering)}>{isRegistering ? "¿Ya tienes cuenta?" : "Crear cuenta nueva"}</p>
+                </div>
+                </div>
+            );
+        };
+
+        const VideoPlayer = ({ video, isActive, toggleLike, onShare, onVisitProfile }) => {
+            const videoRef = useRef(null);
+            const [playing, setPlaying] = useState(false);
+            const [progress, setProgress] = useState(0);
+            const [buffering, setBuffering] = useState(false);
+
+            useEffect(() => {
+                const videoEl = videoRef.current;
+                if (!videoEl) return;
+
+                if (isActive) {
+                const playPromise = videoEl.play();
+                if (playPromise !== undefined) {
+                    playPromise
+                    .then(() => {
+                        setPlaying(true);
+                        videoEl.muted = false;
+                    })
+                    .catch(() => {
+                        videoEl.muted = true;
+                        videoEl.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+                    });
+                }
+                } else {
+                videoEl.pause();
+                videoEl.currentTime = 0;
+                setPlaying(false);
+                }
+            }, [isActive]);
+
+            useEffect(() => {
+                const el = videoRef.current;
+                if(!el) return;
+                const wait = () => setBuffering(true);
+                const play = () => setBuffering(false);
+                el.addEventListener('waiting', wait);
+                el.addEventListener('playing', play);
+                return () => { el.removeEventListener('waiting', wait); el.removeEventListener('playing', play); };
+            }, []);
+
+            const togglePlay = () => {
+                const el = videoRef.current;
+                if(!el) return;
+                if(el.paused) { el.play(); setPlaying(true); } else { el.pause(); setPlaying(false); }
+            };
+
+            const handleTime = () => {
+                if(videoRef.current) setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100);
+            };
+
+            const actionBtnClass = "p-2 bg-gray-800/80 rounded-xl border border-gray-600 backdrop-blur-md transition-all active:scale-90 hover:bg-gray-700 hover:border-gray-400 shadow-lg";
+
+            return (
+                <div className="relative w-full h-full snap-start bg-gray-900 overflow-hidden">
+                <video
+                    ref={videoRef}
+                    src={video.url}
+                    className="w-full h-full object-cover opacity-90"
+                    loop
+                    playsInline
+                    onClick={togglePlay}
+                    onTimeUpdate={handleTime}
                 />
-            )) : <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-white/50"/></div>}
-        </div>
+                
+                {buffering && <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none"><Loader2 size={50} className="text-white/50 animate-spin"/></div>}
+                
+                {!playing && !buffering && (
+                    <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+                    <div className="bg-white/10 backdrop-blur-md p-6 rounded-full border border-white/20 shadow-xl">
+                        <Play size={40} className="text-white fill-white opacity-80" />
+                    </div>
+                    </div>
+                )}
 
-        {activeTab === 'trends' && <TrendsView videos={videos} onVideoClick={openProfileVideo} />}
-
-        {activeTab === 'profile' && (
-            <ProfileView 
-                targetUserId={viewingProfile || user.uid} 
-                currentUser={user} 
-                videos={videos} 
-                onBack={() => {
-                    if(feedMode === 'profile') setActiveTab('home');
-                    else { setViewingProfile(null); setActiveTab('home'); }
-                }} 
-                onVideoClick={openProfileVideo}
-                onLogout={() => signOut(auth)}
-                onChat={startChat}
-            />
-        )}
-
-        {activeTab === 'inbox' && (
-            <InboxView user={user} onOpenChat={setActiveChatId} />
-        )}
-
-        {/* NAV ORIGINAL */}
-        <div className="bg-gray-900/95 border-t border-gray-500 p-2 flex justify-around items-center z-40 pb-5 backdrop-blur-xl">
-            <button onClick={goHome} className={`flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-100`}>
-                <Home size={26} strokeWidth={activeTab==='home'?3:2} className="text-white fill-white"/><span className="text-[10px] font-medium text-white">Inicio</span>
-            </button>
-            <button onClick={() => setActiveTab('trends')} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
-                <img src={ICONS.tendencia} className="w-7 h-7 invert"/><span className="text-[10px] font-medium text-white">Tendencias</span>
-            </button>
-            
-            <button onClick={() => setShowUpload(true)} className="relative -top-1 cursor-pointer group mx-2">
-                <div className="absolute inset-0 bg-white/20 rounded-xl blur-md group-hover:blur-lg transition duration-300 opacity-50"></div>
-                <div className="relative bg-white w-14 h-9 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform duration-200 border border-gray-200">
-                    <img src={ICONS.crear} className="w-6 h-6"/>
+                <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-800/50 z-30">
+                    <div className="h-full bg-white transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(255,255,255,0.5)]" style={{ width: `${progress}%` }} />
                 </div>
-            </button>
 
-            <button onClick={()=>setActiveTab('inbox')} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
-                <img src={ICONS.bandeja} className="w-7 h-7 invert"/><span className="text-[10px] font-medium text-white">Bandeja</span>
-            </button>
-            <button onClick={()=>{setViewingProfile(null); setActiveTab('profile')}} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
-                <img src={ICONS.perfil} className="w-7 h-7 invert"/><span className="text-[10px] font-medium text-white">Perfil</span>
-            </button>
-        </div>
+                <div className="absolute right-2 bottom-28 flex flex-col items-center gap-5 z-30">
+                    <div onClick={() => onVisitProfile(video.authorId)} className="relative cursor-pointer transition-transform active:scale-90 mb-2">
+                    <div className="w-12 h-12 rounded-full border-2 border-white p-0.5 overflow-hidden bg-gray-800 shadow-lg">
+                        <img src={video.authorAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${video.authorId}`} className="w-full h-full object-cover" />
+                    </div>
+                    <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-pink-500 rounded-full w-5 h-5 flex items-center justify-center shadow-md ring-2 ring-gray-900">
+                        <span className="text-white text-[10px] font-bold">+</span>
+                    </div>
+                    </div>
 
-        <UploadModal isOpen={showUpload} onClose={() => setShowUpload(false)} user={user} />
-        
-        {/* CHAT OVERLAY */}
-        {activeChatId && <ChatScreen chatId={activeChatId} user={user} onClose={() => setActiveChatId(null)} />}
-        
-      </div>
-      <style>{`.no-scrollbar::-webkit-scrollbar {display: none;} .animate-spin-slow { animation: spin 5s linear infinite; } .filter-red { filter: invert(27%) sepia(51%) saturate(2878%) hue-rotate(346deg) brightness(104%) contrast(97%); }`}</style>
-    </div>
-  );
-}
+                    <button onClick={() => toggleLike(video)} className="flex flex-col items-center gap-1 group">
+                    <div className={actionBtnClass}>
+                        <img src={ICONS.corazon} className={`w-7 h-7 transition-all duration-300 drop-shadow-lg ${video.liked ? 'filter-red' : 'invert opacity-90'}`} />
+                    </div>
+                    <span className="text-white text-xs font-medium drop-shadow-md">{video.likes}</span>
+                    </button>
+
+                    {/* Sin comentarios botón */}
+
+                    <button onClick={() => onShare(video.url)} className="flex flex-col items-center gap-1 group">
+                    <div className={actionBtnClass}>
+                        <img src={ICONS.compartir} className="w-7 h-7 invert opacity-90 drop-shadow-lg" />
+                    </div>
+                    <span className="text-white text-xs font-medium drop-shadow-md">Share</span>
+                    </button>
+
+                    <div className={`mt-2 w-12 h-12 rounded-full bg-gray-800 border-[3px] border-gray-700 flex items-center justify-center overflow-hidden ${playing ? 'animate-spin-slow' : ''} shadow-lg`}>
+                        <div className="w-full h-full bg-gradient-to-br from-gray-700 to-black flex items-center justify-center">
+                            <Music2 size={14} className="text-white drop-shadow-md" />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="absolute bottom-24 left-4 right-20 z-20 text-white pointer-events-none">
+                    <h3 className="font-bold text-lg drop-shadow-lg mb-2 text-gray-100 cursor-pointer pointer-events-auto w-fit" onClick={() => onVisitProfile(video.authorId)}>@{video.authorName}</h3>
+                    <p className="text-sm drop-shadow-md line-clamp-2 mb-4 text-gray-200 font-light leading-relaxed">{video.description}</p>
+                    <div className="flex items-center gap-2 text-xs font-medium bg-white/5 border border-white/10 w-fit px-4 py-2 rounded-full backdrop-blur-md shadow-sm">
+                    <Music2 size={12} />
+                    <span className="animate-marquee whitespace-nowrap max-w-[150px] overflow-hidden text-ellipsis">Sonido original - {video.authorName}</span>
+                    </div>
+                </div>
+                </div>
+            );
+        };
+
+        const ProfileView = ({ targetUserId, currentUser, videos, onBack, onVideoClick, onLogout, onChat }) => {
+            const [profile, setProfile] = useState(null);
+            const [isFollowing, setIsFollowing] = useState(false);
+            const [isEditing, setIsEditing] = useState(false);
+            
+            const isMyProfile = targetUserId === currentUser.uid;
+            const userVideos = videos.filter(v => v.authorId === targetUserId);
+
+            useEffect(() => {
+                const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId), (s) => {
+                if (s.exists()) setProfile(s.data());
+                });
+                if (!isMyProfile) {
+                    const checkFollow = onSnapshot(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'following', targetUserId), (s) => {
+                        setIsFollowing(s.exists());
+                    });
+                    return () => { unsub(); checkFollow(); };
+                }
+                return () => unsub();
+            }, [targetUserId, currentUser]);
+
+            const handleFollow = async () => {
+                const myRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'following', targetUserId);
+                const targetPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId);
+                const myPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.uid);
+
+                if (isFollowing) {
+                    await deleteDoc(myRef);
+                    await updateDoc(targetPublicRef, { "stats.followers": increment(-1) });
+                    await updateDoc(myPublicRef, { "stats.following": increment(-1) });
+                } else {
+                    await setDoc(myRef, { since: new Date().toISOString() });
+                    await updateDoc(targetPublicRef, { "stats.followers": increment(1) });
+                    await updateDoc(myPublicRef, { "stats.following": increment(1) });
+                }
+            };
+
+            return (
+                <div className="w-full h-full bg-gray-900 pt-14 overflow-y-auto pb-24 animate-in slide-in-from-right">
+                {!isMyProfile && (
+                    <div className="absolute top-0 left-0 w-full p-4 flex items-center gap-4 bg-gray-900/80 backdrop-blur-md z-40 border-b border-white/5">
+                        <button onClick={onBack}><ArrowLeft className="text-white"/></button>
+                        <span className="font-bold text-white">{profile?.displayName}</span>
+                    </div>
+                )}
+
+                <div className="flex flex-col items-center justify-center mb-6 px-4 mt-4">
+                    <div className="w-24 h-24 rounded-full border-2 border-gray-700 p-1 mb-3">
+                        <img src={profile?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${targetUserId}`} className="w-full h-full rounded-full bg-gray-800 object-cover" />
+                    </div>
+                    <h2 className="text-lg font-bold text-white">@{profile?.username || "Usuario"}</h2>
+                    <p className="text-sm text-gray-400 text-center mt-1">{profile?.bio || "Sin biografía"}</p>
+                    
+                    <div className="flex items-center gap-8 mt-6 text-center">
+                        <div><div className="font-bold text-white text-lg">{profile?.stats?.following || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Siguiendo</div></div>
+                        <div><div className="font-bold text-white text-lg">{profile?.stats?.followers || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Seguidores</div></div>
+                        <div><div className="font-bold text-white text-lg">{profile?.stats?.likes || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Likes</div></div>
+                    </div>
+                    
+                    <div className="flex gap-2 mt-6 w-full max-w-xs px-4">
+                        {isMyProfile ? (
+                            <>
+                                <button onClick={() => setIsEditing(true)} className="flex-1 py-2 bg-gray-800 text-white text-sm font-bold rounded-lg border border-gray-600">Editar Perfil</button>
+                                <button onClick={onLogout} className="w-10 flex items-center justify-center bg-gray-800 text-white rounded-lg border border-gray-600"><LogOut size={16}/></button>
+                            </>
+                        ) : (
+                            <>
+                                <button 
+                                    onClick={handleFollow}
+                                    className={`flex-1 py-2 text-white text-sm font-bold rounded-lg border transition-all flex items-center justify-center gap-2
+                                    ${isFollowing ? 'bg-gray-800 border-gray-600' : 'bg-white text-black hover:bg-gray-200'}`}
+                                >
+                                    {isFollowing ? <><UserCheck size={16}/> Siguiendo</> : <><UserPlus size={16}/> Seguir</>}
+                                </button>
+                                <button onClick={() => onChat(targetUserId, profile)} className="w-12 flex items-center justify-center bg-gray-800 text-white rounded-lg border border-gray-600">
+                                    <MessageCircle size={18}/>
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </div>
+
+                <div className="border-t border-gray-800 w-full bg-gray-900 min-h-[300px]">
+                    <div className="grid grid-cols-3 gap-0.5">
+                        {userVideos.map((video, idx) => (
+                            <div key={video.id} onClick={() => onVideoClick(video.id)} className="relative aspect-[3/4] bg-gray-800 cursor-pointer overflow-hidden">
+                            <video src={video.url} className="w-full h-full object-cover opacity-90 hover:opacity-100 transition" />
+                            <div className="absolute bottom-1 left-1 flex items-center gap-1 text-[10px] text-white font-bold drop-shadow-md">
+                                <Play size={10} fill="white"/> {video.likes || 0}
+                            </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                
+                {isMyProfile && <EditProfileModal isOpen={isEditing} onClose={() => setIsEditing(false)} user={currentUser} profile={profile} onUpdate={()=>{}} />}
+                </div>
+            );
+        };
+
+        const EditProfileModal = ({ isOpen, onClose, user, profile, onUpdate }) => {
+            const [displayName, setDisplayName] = useState("");
+            const [bio, setBio] = useState("");
+            const [loading, setLoading] = useState(false);
+            useEffect(() => { if(profile) { setDisplayName(profile.displayName||""); setBio(profile.bio||""); } }, [profile]);
+            
+            const handleSave = async () => {
+                setLoading(true);
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), { displayName, bio });
+                setLoading(false); onClose();
+            };
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
+                <div className="bg-gray-900 w-full max-w-xs rounded-xl p-6 border border-gray-700">
+                    <h3 className="text-white font-bold mb-4">Editar Perfil</h3>
+                    <input value={displayName} onChange={e => setDisplayName(e.target.value)} className="w-full bg-gray-800 text-white p-3 rounded-lg mb-3 outline-none" placeholder="Nombre" />
+                    <textarea value={bio} onChange={e => setBio(e.target.value)} className="w-full bg-gray-800 text-white p-3 rounded-lg mb-4 outline-none" placeholder="Bio" rows={3} />
+                    <button onClick={handleSave} disabled={loading} className="w-full bg-white text-black font-bold py-3 rounded-lg">{loading?"Guardando...":"Guardar"}</button>
+                    <button onClick={onClose} className="w-full text-gray-400 text-sm mt-3">Cancelar</button>
+                </div>
+                </div>
+            );
+        };
+
+        const UploadModal = ({ isOpen, onClose, user }) => {
+            const [file, setFile] = useState(null);
+            const [preview, setPreview] = useState(null);
+            const [desc, setDesc] = useState("");
+            const [loading, setLoading] = useState(false);
+            const [status, setStatus] = useState("");
+
+            const handleFile = (e) => { const f = e.target.files[0]; if(f) { setFile(f); setPreview(URL.createObjectURL(f)); }};
+            const handleUpload = async () => {
+                if(!file) return;
+                setLoading(true);
+                try {
+                    const path = `videos/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
+                    const url = await uploadToGitHub(file, path, setStatus);
+                    const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), {
+                        url, authorId: user.uid, authorName: userData.displayName, authorAvatar: userData.photoURL,
+                        description: desc, likes: 0, commentsCount: 0, createdAt: new Date().toISOString()
+                    });
+                    onClose(); setFile(null); setPreview(null); setDesc("");
+                } catch(e) { setStatus("Error: " + e.message); }
+                setLoading(false);
+            };
+
+            if(!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 bg-gray-900/95 backdrop-blur-xl flex flex-col animate-in fade-in">
+                    <div className="p-4 flex justify-between items-center border-b border-gray-700">
+                        <button onClick={onClose}><X className="text-gray-400 hover:text-white"/></button>
+                        <h3 className="text-white font-bold flex items-center gap-2"><img src={ICONS.crear} className="w-6 h-6 invert"/> Nuevo Video</h3>
+                        <div className="w-6"></div>
+                    </div>
+                    <div className="flex-1 p-6 flex flex-col items-center justify-center">
+                        {!preview ? (
+                            <label className="w-full h-64 border-2 border-dashed border-gray-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-gray-400 bg-gray-800/30">
+                                <div className="p-4 rounded-full bg-gray-700 mb-3"><img src={ICONS.crear} className="w-8 h-8 invert opacity-70"/></div>
+                                <span className="text-gray-400 font-medium">Seleccionar video</span>
+                                <input type="file" accept="video/*" className="hidden" onChange={handleFile}/>
+                            </label>
+                        ) : (
+                            <div className="relative w-full h-64 bg-black rounded-2xl overflow-hidden border border-gray-700">
+                                <video src={preview} className="w-full h-full object-contain"/>
+                                <button onClick={()=>{setPreview(null);setFile(null)}} className="absolute top-2 right-2 bg-black/50 p-1.5 rounded-full text-white hover:bg-black/80"><X size={16}/></button>
+                            </div>
+                        )}
+                        <textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Añade una descripción..." className="w-full bg-gray-900 text-white p-4 rounded-xl mt-6 h-24 outline-none resize-none border border-gray-700 focus:border-gray-500"/>
+                        {status && <p className="text-cyan-400 text-sm mt-2 animate-pulse">{status}</p>}
+                        <button disabled={loading||!file} onClick={handleUpload} className="w-full bg-white text-black font-bold py-3.5 rounded-xl mt-auto mb-4 disabled:opacity-50 hover:bg-gray-200 transition shadow-lg">{loading?"Publicando...":"Publicar Video"}</button>
+                    </div>
+                </div>
+            );
+        };
+
+        const TrendsView = ({ videos, onVideoClick }) => {
+            const [search, setSearch] = useState("");
+            const filteredVideos = videos.filter(v => 
+                (v.description || "").toLowerCase().includes(search.toLowerCase()) ||
+                (v.authorName || v.author || "").toLowerCase().includes(search.toLowerCase())
+            );
+            return (
+                <div className="w-full h-full bg-gray-900 pt-16 px-4 overflow-y-auto pb-24">
+                <div className="relative mb-6">
+                    <input type="text" placeholder="Buscar tendencias..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-gray-800 text-white p-3 pl-10 rounded-xl border border-gray-700 outline-none" />
+                    <Search className="absolute left-3 top-3.5 text-gray-500" size={18} />
+                </div>
+                <h3 className="font-bold text-white mb-4 flex items-center gap-2"><Hash className="text-cyan-400" size={18} /> Videos Populares</h3>
+                <div className="grid grid-cols-2 gap-2">
+                    {filteredVideos.map(video => (
+                    <div key={video.id} onClick={() => onVideoClick(video)} className="relative aspect-[9/16] bg-gray-800 rounded-xl overflow-hidden cursor-pointer group shadow-lg border border-gray-800">
+                        <video src={video.url} className="w-full h-full object-cover opacity-80" muted />
+                        <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
+                            <p className="text-xs font-bold text-white truncate">@{video.authorName}</p>
+                        </div>
+                    </div>
+                    ))}
+                </div>
+                </div>
+            );
+        };
+
+        const InboxView = ({ user, onRequestChat, onOpenChat }) => {
+            const [chats, setChats] = useState([]);
+            const [tab, setTab] = useState('chats'); 
+
+            useEffect(() => {
+                if (!user) return;
+                const q = query(collection(db, 'artifacts', appId, 'chats'), where('participants', 'array-contains', user.uid));
+                const unsub = onSnapshot(q, (snap) => {
+                    const allChats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setChats(allChats);
+                });
+                return () => unsub();
+            }, [user]);
+
+            const myChats = chats.filter(c => c.status === 'accepted');
+            const requests = chats.filter(c => c.status === 'pending' && c.targetId === user.uid);
+
+            const handleAccept = async (chatId) => {
+                await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted' });
+            };
+
+            return (
+                <div className="w-full h-full bg-gray-900 pt-16 px-4 overflow-y-auto pb-24">
+                <div className="flex gap-4 mb-6 border-b border-gray-800 pb-2">
+                    <button onClick={() => setTab('chats')} className={`text-sm font-bold pb-2 ${tab==='chats'?'text-white border-b-2 border-white':'text-gray-500'}`}>Mensajes</button>
+                    <button onClick={() => setTab('requests')} className={`text-sm font-bold pb-2 ${tab==='requests'?'text-white border-b-2 border-white':'text-gray-500'}`}>Solicitudes {requests.length > 0 && <span className="text-red-500">({requests.length})</span>}</button>
+                </div>
+
+                <div className="space-y-2">
+                    {tab === 'chats' ? (
+                        myChats.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes mensajes</div> :
+                        myChats.map(chat => {
+                            const otherUid = chat.participants.find(uid => uid !== user.uid);
+                            const otherName = chat.participantsData?.[otherUid]?.displayName || "Usuario";
+                            return (
+                                <div key={chat.id} onClick={() => onOpenChat(chat.id)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800">
+                                    <div className="w-12 h-12 rounded-full bg-gray-700 flex items-center justify-center text-white font-bold text-lg uppercase">{otherName[0]}</div>
+                                    <div className="flex-1">
+                                        <p className="font-bold text-white">{otherName}</p>
+                                        <p className="text-xs text-gray-400">Toca para chatear</p>
+                                    </div>
+                                </div>
+                            )
+                        })
+                    ) : (
+                        requests.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes solicitudes</div> :
+                        requests.map(req => (
+                            <div key={req.id} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800">
+                                <div className="flex-1">
+                                    <p className="font-bold text-white">Solicitud de mensaje</p>
+                                    <p className="text-xs text-gray-400">Alguien quiere chatear contigo</p>
+                                </div>
+                                <button onClick={() => handleAccept(req.id)} className="px-4 py-2 bg-white text-black rounded-lg text-xs font-bold">Aceptar</button>
+                            </div>
+                        ))
+                    )}
+                </div>
+                </div>
+            );
+        };
+
+        const ChatScreen = ({ chatId, user, onClose }) => {
+            const [messages, setMessages] = useState([]);
+            const [txt, setTxt] = useState("");
+            const endRef = useRef(null);
+
+            useEffect(() => {
+                if(!chatId) return;
+                const q = query(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), orderBy('createdAt', 'asc'));
+                const unsub = onSnapshot(q, s => {
+                    setMessages(s.docs.map(d => d.data()));
+                    setTimeout(() => endRef.current?.scrollIntoView({behavior:'smooth'}), 100);
+                });
+                return () => unsub();
+            }, [chatId]);
+
+            const send = async () => {
+                if(!txt.trim()) return;
+                await addDoc(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), {
+                    text: txt, senderId: user.uid, createdAt: new Date().toISOString()
+                });
+                setTxt("");
+            };
+
+            return (
+                <div className="absolute inset-0 z-50 bg-gray-900 flex flex-col animate-in slide-in-from-right">
+                    <div className="p-4 bg-gray-900 border-b border-gray-800 flex items-center gap-4">
+                        <button onClick={onClose}><ArrowLeft className="text-white"/></button>
+                        <span className="font-bold text-white">Chat</span>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                        {messages.map((m, i) => {
+                            const isMe = m.senderId === user.uid;
+                            return (
+                                <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`max-w-[70%] p-3 rounded-2xl text-sm ${isMe ? 'bg-white text-black' : 'bg-gray-800 text-white'}`}>
+                                        {m.text}
+                                    </div>
+                                </div>
+                            )
+                        })}
+                        <div ref={endRef}/>
+                    </div>
+                    <div className="p-3 bg-gray-900 border-t border-gray-800 flex gap-2">
+                        <input value={txt} onChange={e=>setTxt(e.target.value)} className="flex-1 bg-gray-800 text-white p-3 rounded-full outline-none" placeholder="Mensaje..." onKeyDown={e=>e.key==='Enter'&&send()}/>
+                        <button onClick={send} className="p-3 bg-white rounded-full text-black"><Send size={18}/></button>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [videos, setVideos] = useState([]);
+            const [activeTab, setActiveTab] = useState('home');
+            const [currentIndex, setCurrentIndex] = useState(0);
+            const [showUpload, setShowUpload] = useState(false);
+            const [viewingProfile, setViewingProfile] = useState(null);
+            const [activeChatId, setActiveChatId] = useState(null);
+            const [feedMode, setFeedMode] = useState('global');
+            const [profileFeedVideos, setProfileFeedVideos] = useState([]);
+            const feedRef = useRef(null);
+
+            useEffect(() => onAuthStateChanged(auth, setUser), []);
+
+            useEffect(() => {
+                if(!user) return;
+                const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), orderBy('createdAt', 'desc'));
+                return onSnapshot(q, s => setVideos(s.docs.map(d => ({id: d.id, ...d.data()}))));
+            }, [user]);
+
+            const handleScroll = () => {
+                if (feedRef.current && activeTab === 'home') {
+                const idx = Math.round(feedRef.current.scrollTop / feedRef.current.clientHeight);
+                if (idx !== currentIndex) setCurrentIndex(idx);
+                }
+            };
+
+            const toggleLike = async (video) => {
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), { likes: increment(1) });
+            };
+
+            const goToProfile = (uid) => {
+                setViewingProfile(uid);
+                setActiveTab('profile');
+            };
+
+            const openProfileVideo = (video) => {
+                // Si viene de tendencias, video es el objeto. Si es de perfil, es posible que necesitemos ID.
+                // Aquí unificamos: buscamos video completo si es necesario.
+                let targetVid = video;
+                if (!targetVid.id) targetVid = videos.find(v => v.id === video);
+
+                const userVids = videos.filter(v => v.authorId === targetVid.authorId);
+                const idx = userVids.findIndex(v => v.id === targetVid.id);
+                
+                setProfileFeedVideos(userVids);
+                setFeedMode('profile');
+                setActiveTab('home');
+                // Timeout para dar tiempo al render
+                setTimeout(() => {
+                    setCurrentIndex(idx);
+                    feedRef.current?.scrollTo({top: idx * feedRef.current.clientHeight, behavior: 'auto'});
+                }, 50);
+            };
+
+            const goHome = () => {
+                setFeedMode('global');
+                setActiveTab('home');
+                setViewingProfile(null);
+            };
+
+            const startChat = async (targetUid, targetProfile) => {
+                const chatId = getChatId(user.uid, targetUid);
+                const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
+                const chatSnap = await getDoc(chatRef);
+
+                if (chatSnap.exists()) {
+                    if (chatSnap.data().status === 'accepted') {
+                        setActiveChatId(chatId); 
+                    } else {
+                        alert("Solicitud pendiente...");
+                    }
+                } else {
+                    await setDoc(chatRef, {
+                        participants: [user.uid, targetUid],
+                        participantsData: {
+                            [user.uid]: { displayName: user.displayName || "Usuario" },
+                            [targetUid]: { displayName: targetProfile.displayName || "Usuario" }
+                        },
+                        status: 'pending',
+                        targetId: targetUid,
+                        createdAt: new Date().toISOString()
+                    });
+                    alert("Solicitud enviada");
+                }
+            };
+
+            const currentFeedVideos = feedMode === 'global' ? videos : profileFeedVideos;
+
+            if(!user) return <AuthScreen />;
+
+            return (
+                <div className="flex justify-center bg-black h-screen w-full font-sans text-white select-none">
+                <div className="relative w-full max-w-md h-full bg-gray-900 shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col border-x border-gray-800 overflow-hidden">
+                    
+                    {activeTab === 'home' && (
+                        <div className="absolute top-0 w-full p-4 pt-8 z-30 flex justify-center gap-4 bg-gradient-to-b from-gray-900/80 to-transparent pointer-events-none backdrop-blur-[1px]">
+                            <span className={`font-bold text-base cursor-pointer pointer-events-auto ${feedMode==='profile'?'text-gray-400':'text-white border-b-2 border-white pb-1'}`} onClick={goHome}>Para Ti</span>
+                            {feedMode === 'profile' && <span className="font-bold text-white border-b-2 pointer-events-auto pb-1">Viendo Perfil</span>}
+                        </div>
+                    )}
+
+                    <div ref={feedRef} onScroll={handleScroll} className={`flex-1 overflow-y-auto snap-y snap-mandatory no-scrollbar bg-gray-900 ${activeTab !== 'home' ? 'hidden' : ''}`}>
+                        {currentFeedVideos.length > 0 ? currentFeedVideos.map((v, i) => (
+                            <VideoPlayer 
+                                key={v.id} 
+                                video={v} 
+                                isActive={i === currentIndex && activeTab === 'home'} 
+                                toggleLike={toggleLike} 
+                                onShare={()=>{}} 
+                                onVisitProfile={goToProfile}
+                            />
+                        )) : <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-white/50"/></div>}
+                    </div>
+
+                    {activeTab === 'trends' && <TrendsView videos={videos} onVideoClick={openProfileVideo} />}
+
+                    {activeTab === 'profile' && (
+                        <ProfileView 
+                            targetUserId={viewingProfile || user.uid} 
+                            currentUser={user} 
+                            videos={videos} 
+                            onBack={() => {
+                                if(feedMode === 'profile') setActiveTab('home');
+                                else { setViewingProfile(null); setActiveTab('home'); }
+                            }} 
+                            onVideoClick={(id) => openProfileVideo({id, authorId: viewingProfile || user.uid})}
+                            onLogout={() => signOut(auth)}
+                            onChat={startChat}
+                        />
+                    )}
+
+                    {activeTab === 'inbox' && (
+                        <InboxView user={user} onOpenChat={setActiveChatId} />
+                    )}
+
+                    <div className="bg-gray-900/95 border-t border-gray-500 p-2 flex justify-around items-center z-40 pb-5 backdrop-blur-xl">
+                        <button onClick={goHome} className={`flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-100`}>
+                            <Home size={26} strokeWidth={activeTab==='home'?3:2} className="text-white fill-white"/><span className="text-[10px] font-medium text-white">Inicio</span>
+                        </button>
+                        <button onClick={() => setActiveTab('trends')} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
+                            <img src={ICONS.tendencia} className="w-7 h-7 invert"/><span className="text-[10px] font-medium text-white">Tendencias</span>
+                        </button>
+                        
+                        <button onClick={() => setShowUpload(true)} className="relative -top-1 cursor-pointer group mx-2">
+                            <div className="absolute inset-0 bg-white/20 rounded-xl blur-md group-hover:blur-lg transition duration-300 opacity-50"></div>
+                            <div className="relative bg-white w-14 h-9 rounded-xl flex items-center justify-center group-hover:scale-105 transition-transform duration-200 border border-gray-200">
+                                <img src={ICONS.crear} className="w-6 h-6"/>
+                            </div>
+                        </button>
+
+                        <button onClick={()=>setActiveTab('inbox')} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
+                            <img src={ICONS.bandeja} className="w-7 h-7 invert"/><span className="text-[10px] font-medium text-white">Bandeja</span>
+                        </button>
+                        <button onClick={()=>{setViewingProfile(null); setActiveTab('profile')}} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
+                            <img src={ICONS.perfil} className="w-7 h-7 invert"/><span className="text-[10px] font-medium text-white">Perfil</span>
+                        </button>
+                    </div>
+
+                    <UploadModal isOpen={showUpload} onClose={() => setShowUpload(false)} user={user} />
+                    
+                    {activeChatId && <ChatScreen chatId={activeChatId} user={user} onClose={() => setActiveChatId(null)} />}
+                    
+                </div>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
