@@ -14,7 +14,6 @@
             background-color: #000; 
             color: white; 
             overflow: hidden; 
-            /* Prevenir rebote en iOS/Android */
             overscroll-behavior: none;
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -58,12 +57,13 @@
             flex-direction: column-reverse; /* Hace que los nuevos mensajes aparezcan abajo */
             overflow-y: auto;
             flex: 1;
+            padding: 0 1rem; /* Padding horizontal */
         }
         .message-list-content {
             display: flex;
             flex-direction: column;
             gap: 0.75rem; /* space-y-3 */
-            padding: 1rem; /* p-4 */
+            padding-top: 1rem; /* p-4 */
         }
     </style>
 </head>
@@ -135,7 +135,10 @@
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message: `Upload ${path}`, content: content, encoding: 'base64' })
             });
-            if (!response.ok) throw new Error("Error GitHub");
+            if (!response.ok) {
+                const errorBody = await response.json();
+                 throw new Error(`Error GitHub: ${errorBody.message || response.statusText}`);
+            }
             return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
         };
 
@@ -304,12 +307,11 @@
             useEffect(() => {
                 if(!auth.currentUser || !video.id) return;
                 const likeRef = doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'likes', auth.currentUser.uid);
-                // Evitamos el error de "permission-denied" al inicio al verificar auth.currentUser
                 const unsubscribe = auth.currentUser ? onSnapshot(likeRef, (s) => {
                     setHasLiked(s.exists());
                 }) : () => {};
                 return () => unsubscribe();
-            }, [video.id, auth.currentUser]); // Dependencia del usuario
+            }, [video.id, auth.currentUser]);
 
             useEffect(() => {
                 const videoEl = videoRef.current;
@@ -561,7 +563,7 @@
                 setLoading(true);
                 try {
                     const path = `${type}s/${user.uid}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
-                    const url = await uploadToGitHub(file, path, (s) => alert(s)); // Usamos alert para mostrar estado
+                    const url = await uploadToGitHub(file, path, (s) => alert(s)); 
                     
                     const updateData = type === 'photo' ? { photoURL: url } : { bannerURL: url };
                     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), updateData);
@@ -667,52 +669,98 @@
             );
         };
 
-        const TrendsView = ({ videos, onVideoClick }) => {
+        const TrendsView = ({ videos, onVideoClick, onVisitProfile }) => {
             const [search, setSearch] = useState("");
+            const [tab, setTab] = useState('videos');
+            const [users, setUsers] = useState([]);
+            
+            // Búsqueda de usuarios
+            useEffect(() => {
+                if (tab === 'users' && search.length >= 2) {
+                    const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'users'), 
+                        where('displayName', '>=', search), 
+                        where('displayName', '<=', search + '\uf8ff'),
+                        limit(10)
+                    );
+                    const unsub = onSnapshot(q, (snap) => {
+                        setUsers(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(u => u.id !== auth.currentUser.uid));
+                    });
+                    return () => unsub();
+                } else if (tab === 'users') {
+                    setUsers([]);
+                }
+            }, [tab, search]);
+            
             const filteredVideos = videos.filter(v => 
                 (v.description || "").toLowerCase().includes(search.toLowerCase()) ||
                 (v.authorName || v.author || "").toLowerCase().includes(search.toLowerCase())
             );
+            
             return (
                 <div className="w-full h-full bg-gray-900 pt-16 px-4 overflow-y-auto pb-24">
                 <div className="relative mb-6">
-                    <input type="text" placeholder="Buscar tendencias..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-gray-800 text-white p-3 pl-10 rounded-xl border border-gray-700 outline-none" />
+                    <input type="text" placeholder="Buscar..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-gray-800 text-white p-3 pl-10 rounded-xl border border-gray-700 outline-none" />
                     <Search className="absolute left-3 top-3.5 text-gray-500" size={18} />
                 </div>
-                <h3 className="font-bold text-white mb-4 flex items-center gap-2"><Hash className="text-cyan-400" size={18} /> Videos Populares</h3>
-                <div className="grid grid-cols-2 gap-2">
-                    {filteredVideos.map(video => (
-                    <div key={video.id} onClick={() => onVideoClick(video)} className="relative aspect-[9/16] bg-gray-800 rounded-xl overflow-hidden cursor-pointer group shadow-lg border border-gray-800">
-                        <video src={video.url + '#t=0.1'} className="w-full h-full object-cover opacity-80" muted preload="metadata" />
-                        <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                            <p className="text-xs font-bold text-white truncate">@{video.authorName}</p>
-                        </div>
-                    </div>
-                    ))}
+                
+                <div className="flex gap-4 mb-6 border-b border-gray-800 pb-2">
+                    <button onClick={() => setTab('videos')} className={`text-sm font-bold pb-2 ${tab==='videos'?'text-white border-b-2 border-white':'text-gray-500'}`}>Videos</button>
+                    <button onClick={() => setTab('users')} className={`text-sm font-bold pb-2 ${tab==='users'?'text-white border-b-2 border-white':'text-gray-500'}`}>Usuarios</button>
                 </div>
+                
+                {tab === 'videos' && (
+                    <>
+                        <h3 className="font-bold text-white mb-4 flex items-center gap-2"><Hash className="text-cyan-400" size={18} /> Resultados de Videos</h3>
+                        <div className="grid grid-cols-2 gap-2">
+                            {filteredVideos.map(video => (
+                            <div key={video.id} onClick={() => onVideoClick(video)} className="relative aspect-[9/16] bg-gray-800 rounded-xl overflow-hidden cursor-pointer group shadow-lg border border-gray-800">
+                                <video src={video.url + '#t=0.1'} className="w-full h-full object-cover opacity-80" muted preload="metadata" />
+                                <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
+                                    <p className="text-xs font-bold text-white truncate">@{video.authorName}</p>
+                                </div>
+                            </div>
+                            ))}
+                        </div>
+                    </>
+                )}
+                
+                {tab === 'users' && (
+                    <>
+                        <h3 className="font-bold text-white mb-4 flex items-center gap-2"><UserIcon className="text-cyan-400" size={18} /> Usuarios Encontrados</h3>
+                        <div className="space-y-2">
+                            {users.length === 0 && search.length >= 2 ? <p className="text-gray-500 text-center">No se encontraron usuarios.</p> :
+                            users.map(u => (
+                                <div key={u.id} onClick={() => onVisitProfile(u.id)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800">
+                                    <div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden flex-shrink-0">
+                                        <img src={u.photoURL} className="w-full h-full object-cover"/>
+                                    </div>
+                                    <div className="flex-1">
+                                        <p className="font-bold text-white">@{u.username}</p>
+                                        <p className="text-xs text-gray-400 truncate">{u.displayName}</p>
+                                    </div>
+                                    <UserPlus size={18} className="text-cyan-400"/>
+                                </div>
+                            ))}
+                        </div>
+                    </>
+                )}
                 </div>
             );
         };
 
-        const InboxView = ({ user, onRequestChat, onOpenChat, notifications }) => {
-            const [chats, setChats] = useState([]);
+        const InboxView = ({ user, onOpenChat, notifications, chats }) => {
             const [tab, setTab] = useState('chats'); 
 
-            useEffect(() => {
-                if (!user) return;
-                const q = query(collection(db, 'artifacts', appId, 'chats'), where('participants', 'array-contains', user.uid));
-                const unsub = onSnapshot(q, (snap) => {
-                    const allChats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                    setChats(allChats);
-                });
-                return () => unsub();
-            }, [user]);
-
             const myChats = chats.filter(c => c.status === 'accepted');
-            const requests = chats.filter(c => c.status === 'pending' && c.targetId === user.uid);
+            const requests = chats.filter(c => c.status === 'pending' && c.participants.includes(user.uid));
 
-            const handleAccept = async (chatId) => {
-                await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted' });
+            const handleAccept = async (chatId, targetUid) => {
+                await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted', targetId: null });
+                // Enviar notificación al que solicitó
+                const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
+                 await addDoc(collection(db, 'artifacts', appId, 'users', targetUid, 'notifications'), {
+                    type: 'message_accept', fromUser: user.uid, fromName: userData.displayName, avatar: userData.photoURL, createdAt: new Date().toISOString()
+                });
             };
 
             return (
@@ -728,7 +776,7 @@
                         myChats.map(chat => {
                             const otherUid = chat.participants.find(uid => uid !== user.uid);
                             const otherName = chat.participantsData?.[otherUid]?.displayName || "Usuario";
-                            const otherImg = `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`; 
+                            const otherImg = chat.participantsData?.[otherUid]?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`; 
                             
                             // Verificar racha
                             const isStreakActive = chat.streak && chat.streak.count > 0 && 
@@ -756,15 +804,19 @@
                         })
                     ) : (
                         requests.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes solicitudes</div> :
-                        requests.map(req => (
-                            <div key={req.id} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800">
-                                <div className="flex-1">
-                                    <p className="font-bold text-white">Solicitud de mensaje</p>
-                                    <p className="text-xs text-gray-400">Alguien quiere chatear contigo</p>
+                        requests.map(req => {
+                            const senderUid = req.participants.find(uid => uid !== user.uid);
+                            const senderName = req.participantsData?.[senderUid]?.displayName || "Usuario";
+                            return (
+                                <div key={req.id} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800">
+                                    <div className="flex-1">
+                                        <p className="font-bold text-white">Solicitud de {senderName}</p>
+                                        <p className="text-xs text-gray-400">Quiere chatear contigo</p>
+                                    </div>
+                                    <button onClick={() => handleAccept(req.id, senderUid)} className="px-4 py-2 bg-white text-black rounded-lg text-xs font-bold">Aceptar</button>
                                 </div>
-                                <button onClick={() => handleAccept(req.id)} className="px-4 py-2 bg-white text-black rounded-lg text-xs font-bold">Aceptar</button>
-                            </div>
-                        ))
+                            )
+                        })
                     )}
                 </div>
                 </div>
@@ -787,19 +839,20 @@
             // Listener de mensajes
             useEffect(() => {
                 if(!chatId) return;
-                const q = query(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), orderBy('createdAt', 'desc')); // Orden descendente para cargar al revés
+                // Orden descendente para que el CSS column-reverse funcione
+                const q = query(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), orderBy('createdAt', 'desc')); 
                 const unsub = onSnapshot(q, s => {
                     setMessages(s.docs.map(d => ({id: d.id, ...d.data()})));
                 });
                 return () => unsub();
             }, [chatId]);
             
-            // Scroll al final al cargar mensajes
+            // Scroll al final al cargar mensajes (siempre después de que se cargan)
             useEffect(() => {
                 if (endRef.current) {
-                    endRef.current.scrollIntoView({ behavior: 'smooth' });
+                    endRef.current.scrollIntoView({ behavior: 'auto' });
                 }
-            }, [messages.length]);
+            }, [messages.length, activeChatId]);
             
             // Listener del Typing Indicator (Obtiene el estado de "escribiendo" del chat doc)
             useEffect(() => {
@@ -936,7 +989,7 @@
                 const fileExtension = selectedFile.name.split('.').pop().toLowerCase();
                 let fileType = 'file'; 
                 if (['png', 'jpg', 'jpeg', 'gif'].includes(fileExtension)) fileType = 'image';
-                else if (['mp3', 'wav', 'ogg'].includes(fileExtension)) fileType = 'audio';
+                else if (['mp3', 'wav', 'ogg', 'webm'].includes(fileExtension)) fileType = 'audio';
                 
                 setTxt("Subiendo archivo...");
                 const path = `chats/${chatId}/${Date.now()}_${selectedFile.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
@@ -959,7 +1012,7 @@
                 
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    const options = { mimeType: 'audio/webm' };
+                    const options = { mimeType: 'audio/webm' }; // Formato de audio para Web/GitHub
                     const recorder = new MediaRecorder(stream, options);
                     mediaRecorderRef.current = recorder;
                     audioChunksRef.current = [];
@@ -1016,10 +1069,11 @@
                         <button onClick={onClose}><ArrowLeft className="text-white"/></button>
                         <span className="font-bold text-white">Chat</span>
                     </div>
+                    
                     <div className="message-list-container">
                         <div ref={endRef} />
                         <div className="message-list-content">
-                            {/* Los mensajes se mapean inversamente por el CSS column-reverse, pero la fuente está en orden ascendente */}
+                            {/* Los mensajes se mapean inversamente por el CSS column-reverse */}
                             {messages.slice().reverse().map((m) => ( 
                                 <MessageBubble 
                                     key={m.id} 
@@ -1032,6 +1086,22 @@
                             ))}
                         </div>
                     </div>
+                    
+                    {/* Indicador de escribiendo */}
+                    {isTyping && (
+                        <div className="px-4 py-2">
+                            <div className="flex justify-start">
+                                <div className="max-w-[70%] p-3 rounded-2xl text-sm bg-gray-800 text-white flex items-center gap-2">
+                                    <span className="text-gray-300 italic text-xs">Escribiendo</span>
+                                    <div className="typing-indicator">
+                                        <span className="typing-dot"></span>
+                                        <span className="typing-dot"></span>
+                                        <span className="typing-dot"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     
                     {/* Input y barra de respuesta */}
                     <div className="p-3 bg-gray-900 border-t border-gray-800 flex flex-col gap-2">
@@ -1096,7 +1166,7 @@
                 
                 await addDoc(collection(db, 'artifacts', appId, 'chats', selectedChat, 'messages'), message);
 
-                // Lógica de notificación y racha (simplificada para el modal)
+                // Lógica de racha
                 await updateDoc(doc(db, 'artifacts', appId, 'chats', selectedChat), {
                     streak: {
                         count: increment(1),
@@ -1262,8 +1332,8 @@
                     await setDoc(chatRef, {
                         participants: [user.uid, targetUid],
                         participantsData: {
-                            [user.uid]: { displayName: user.displayName || "Usuario" },
-                            [targetUid]: { displayName: targetProfile.displayName || "Usuario" }
+                            [user.uid]: { displayName: user.displayName || "Usuario", photoURL: user.photoURL },
+                            [targetUid]: { displayName: targetProfile.displayName || "Usuario", photoURL: targetProfile.photoURL }
                         },
                         status: 'pending',
                         createdAt: new Date().toISOString()
@@ -1307,7 +1377,7 @@
                         )) : <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-white/50"/></div>}
                     </div>
 
-                    {activeTab === 'trends' && <TrendsView videos={videos} onVideoClick={openProfileVideo} />}
+                    {activeTab === 'trends' && <TrendsView videos={videos} onVideoClick={openProfileVideo} onVisitProfile={goToProfile} />}
 
                     {activeTab === 'profile' && (
                         <ProfileView 
@@ -1325,7 +1395,7 @@
                     )}
 
                     {activeTab === 'inbox' && (
-                        <InboxView user={user} onOpenChat={setActiveChatId} notifications={notifications} />
+                        <InboxView user={user} onOpenChat={setActiveChatId} notifications={notifications} chats={chats} />
                     )}
 
                     <div className="bg-gray-900/95 border-t border-gray-500 p-2 flex justify-around items-center z-40 pb-5 backdrop-blur-xl h-[80px]">
