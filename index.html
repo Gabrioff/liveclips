@@ -128,6 +128,15 @@
             border-radius: 50%;
             padding: 10px;
         }
+
+        /* FIX CRÍTICO PARA SCROLL SUAVE EN MÓVIL (Petición de usuario) */
+        .snap-mandatory {
+            scroll-snap-type: y mandatory;
+            scroll-snap-stop: always;
+        }
+        .snap-start {
+            scroll-snap-align: start;
+        }
     </style>
 </head>
 <body>
@@ -139,7 +148,7 @@
         import { 
             Music2, Home, Search, Loader2, AlertTriangle, Copy, Play, Pause, 
             User as UserIcon, Hash, Bell, ArrowLeft, Edit3, Camera, Check, X, 
-            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle, FileText, Mic, Image, CornerUpLeft, Zap, MessageSquare, Smile
+            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle, FileText, Mic, Image, CornerUpLeft, Zap, MessageSquare, Smile, Gamepad
         } from 'https://esm.sh/lucide-react@0.344.0';
         
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -191,6 +200,14 @@
             "https://stickerly.pstatic.net/sticker_pack/5I4y11Rk4vxknlhFT0J1mw/9TWCRB/61/251129c4-a931-48e7-82fd-cfb94a086bb0.webp",
             "https://stickerly.pstatic.net/sticker_pack/5I4y11Rk4vxknlhFT0J1mw/9TWCRB/61/331fee66-e576-4188-90cd-de4050f9d010.webp",
             "https://s3.getstickerpack.com/storage/uploads/sticker-pack/monkeys-1/sticker_29.gif?368b8fcecd28f97edda1cff5fc55d18b"
+        ];
+        
+        // --- CONFIGURACIÓN DE JUEGOS ---
+        const GAMES_CONFIG = [
+            { name: "Clash Royale", logo: "https://placehold.co/40x40/f44336/ffffff?text=CR", placeholder: "Ej: https://link.clashroyale.com/invite/friend/...", color: "bg-red-500" },
+            { name: "League of Legends", logo: "https://placehold.co/40x40/03a9f4/ffffff?text=LOL", placeholder: "Ej: Código de partida de LOL", color: "bg-blue-500" },
+            { name: "Among Us", logo: "https://placehold.co/40x40/4caf50/ffffff?text=AU", placeholder: "Ej: Código de sala de Among Us", color: "bg-green-500" },
+            { name: "PUBG Mobile", logo: "https://placehold.co/40x40/ff9800/ffffff?text=PUBG", placeholder: "Ej: ID de sala de PUBG", color: "bg-amber-500" }
         ];
 
 
@@ -301,7 +318,8 @@
         const AudioMessage = ({ audioUrl, isMe, onGeneration, text }) => {
             const audioRef = useRef(new Audio(audioUrl));
             const [isPlaying, setIsPlaying] = useState(false);
-            const [isLoading, setIsLoading] = useState(!audioUrl);
+            // El audio está pendiente de carga si no hay URL Y hay texto largo para TTS
+            const [isLoading, setIsLoading] = useState(!audioUrl && text?.length > 100); 
             const [error, setError] = useState(null);
             
             // Simulación de la forma de onda
@@ -318,9 +336,9 @@
                     return;
                 }
                 
-                // Si no tenemos URL, procedemos a generar TTS
-                if (!text || text.length < 5) {
-                    setError("Texto demasiado corto para generar audio.");
+                // Si no tenemos URL, y el texto es largo, procedemos a generar TTS
+                if (!text || text.length < 100) {
+                    // Si el mensaje es de texto corto, no es un error, simplemente no es un audio TTS.
                     setIsLoading(false);
                     return;
                 }
@@ -386,12 +404,18 @@
                     }
                 };
 
-                generateAndSetAudio();
-                
+                // Solamente generamos si isLoading es true (solo se pone true si hay texto largo sin URL)
+                if (isLoading) {
+                    generateAndSetAudio();
+                }
+
                 return () => {
-                    if (audioRef.current.src) URL.revokeObjectURL(audioRef.current.src);
+                    // Limpieza del objeto URL para evitar memory leaks
+                    if (audioRef.current && audioRef.current.src && audioRef.current.src.startsWith('blob:')) {
+                        URL.revokeObjectURL(audioRef.current.src);
+                    }
                 };
-            }, [text, audioUrl, onGeneration]);
+            }, [text, audioUrl, onGeneration, isLoading]);
 
 
             useEffect(() => {
@@ -407,7 +431,7 @@
 
             const togglePlay = () => {
                 const audio = audioRef.current;
-                if (!audio.src) return;
+                if (!audio.src || isLoading || error) return;
 
                 if (isPlaying) {
                     audio.pause();
@@ -431,11 +455,16 @@
 
             if (error) {
                 return (
-                    <div className="flex items-center gap-2 p-2 bg-red-800/50 rounded-xl text-xs text-red-300">
+                    <div className="flex items-center gap-2 p-3 bg-red-800/50 rounded-xl text-xs text-red-300">
                         <AlertTriangle size={16} />
                         <span>Error de audio</span>
                     </div>
                 );
+            }
+
+            // Si es un mensaje de texto corto (no TTS ni audio de micrófono)
+            if (!audioUrl && text && text.length <= 100) {
+                return <p className="whitespace-pre-wrap">{text}</p>;
             }
 
             return (
@@ -493,6 +522,38 @@
                 className="max-w-[150px] max-h-[150px] object-contain rounded-xl shadow-lg"
             />
         );
+        
+        // --- CHAT: COMPONENTE DE INVITACIÓN A JUEGO (NUEVO) ---
+        const GameInviteMessage = ({ data, isMe }) => {
+            const game = GAMES_CONFIG.find(g => g.name === data.gameName) || { name: "Juego Desconocido", color: "bg-gray-500", logo: "" };
+            
+            const handleJoin = (e) => {
+                e.stopPropagation();
+                // Abrir el enlace en una nueva pestaña (simulación de unirse)
+                window.open(data.inviteLink, '_blank');
+            };
+
+            return (
+                <div className={`p-3 rounded-xl shadow-lg border ${game.color} ${isMe ? 'bg-opacity-80' : 'bg-opacity-90'}`}>
+                    <div className="flex items-center gap-3 mb-2">
+                        <img src={game.logo} alt={game.name} className="w-8 h-8 rounded-full bg-white p-1"/>
+                        <p className="font-bold text-lg text-white">¡Invitación a {game.name}!</p>
+                    </div>
+                    <p className="text-sm text-gray-200 mb-3">
+                        {data.message || `Tu amigo te invita a unirte a una partida de ${game.name}.`}
+                    </p>
+                    <button 
+                        onClick={handleJoin}
+                        className="w-full py-2 bg-white text-black font-bold rounded-lg transition hover:bg-gray-200"
+                    >
+                        Unirse a la Partida
+                    </button>
+                    <p className="text-xs text-gray-400 mt-2 truncate">
+                        {data.inviteLink}
+                    </p>
+                </div>
+            );
+        };
 
         // --- CHAT: COMPONENTE DE MENSAJE CON MINiatura DE VIDEO ---
         const ChatVideoPreview = ({ video, isMe }) => {
@@ -518,9 +579,10 @@
                     className="chat-video-container bg-black/50 shadow-xl"
                     onClick={togglePlay}
                 >
+                    {/* El video debe cargarse desde el principio, ya que el link del video es una fuente válida */}
                     <video
                         ref={videoRef}
-                        src={video.url}
+                        src={video.url + '#t=0.1'} // Usamos #t=0.1 para obtener el frame inicial
                         className="w-full h-full object-cover transition-opacity duration-300"
                         muted={!isPlaying}
                         loop
@@ -578,11 +640,9 @@
             };
 
             const isGif = message.type === 'image' && (message.fileUrl.toLowerCase().endsWith('.gif') || message.fileUrl.toLowerCase().includes('.gif'));
-            const fileIcon = message.fileType === 'audio' ? <Mic size={16} className={isMe ? 'text-black' : 'text-white'}/> : <FileText size={16} className={isMe ? 'text-black' : 'text-white'}/>;
-            
-            // Si el mensaje es de texto y tiene fileUrl (generado por TTS), lo tratamos como audio_tts
-            const isAudioOrTTS = message.type === 'audio' || message.type === 'audio_tts' || (message.type === 'text' && message.fileUrl);
+            const isAudioOrTTS = message.type === 'audio' || message.type === 'audio_tts' || (message.type === 'text' && message.fileUrl && message.text?.length > 100);
             const isSticker = message.type === 'sticker';
+            const isGameInvite = message.type === 'game_invite';
 
             // Ajuste de posición del botón de respuesta para que esté pegado
             const replyButtonPositionClass = isMe ? 'right-[100%] mr-2' : 'left-[100%] ml-2';
@@ -610,6 +670,33 @@
                             </button>
                         )}
                         <StickerMessage stickerUrl={message.fileUrl} />
+                    </div>
+                );
+            }
+
+            // Para Game Invite, no permitimos respuesta/edición en la burbuja (solo eliminar si es tuyo)
+            if (isGameInvite) {
+                 return (
+                    <div 
+                        className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative group`}
+                        onMouseDown={handleMouseDown}
+                        onMouseUp={handleMouseUp}
+                        onTouchStart={handleMouseDown}
+                        onTouchEnd={handleMouseUp}
+                        onTouchCancel={handleMouseUp}
+                    >
+                        {/* Botón de Eliminar (Solo para el dueño) */}
+                        {isMe && (
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
+                                className={`absolute z-20 transition-all duration-200 p-1 bg-red-600 border border-red-800 rounded-full text-white shadow-lg hover:bg-red-700 top-1/2 -translate-y-1/2 
+                                    left-[-20px] 
+                                    ${showMenu ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-3'}`}
+                            >
+                                <X size={16}/>
+                            </button>
+                        )}
+                        <GameInviteMessage data={message.data} isMe={isMe} />
                     </div>
                 );
             }
@@ -665,19 +752,15 @@
                             </div>
                         )}
 
-                        {/* Contenido del mensaje */}
-                        {message.type === 'text' && !message.fileUrl && <p className="whitespace-pre-wrap">{message.text}</p>}
-                        
-                        {/* Audio Generado por Texto (TTS) o Archivo de Audio Subido */}
-                        {isAudioOrTTS && (
+                        {/* Contenido del mensaje: Audio Player o Texto simple */}
+                        {isAudioOrTTS || (message.type === 'text' && message.text?.length <= 100) ? (
                             <AudioMessage 
-                                // Usamos message.fileUrl si existe (audio o TTS ya generado), sino usamos message.text para disparar la generación TTS
                                 audioUrl={message.fileUrl} 
                                 isMe={isMe} 
                                 text={message.text}
                                 onGeneration={handleAudioUrlUpdate}
                             />
-                        )}
+                        ) : null}
                         
                         {message.type === 'image' && (
                             <img 
@@ -689,7 +772,7 @@
                         
                         {message.type === 'file' && (
                             <a href={message.fileUrl} target="_blank" className="flex items-center gap-2 text-cyan-400 hover:underline">
-                                {fileIcon} Archivo Adjunto
+                                <FileText size={16} className={isMe ? 'text-black' : 'text-white'}/> Archivo Adjunto
                             </a>
                         )}
 
@@ -706,6 +789,8 @@
             );
         };
 
+        // --- MODALES (Movidos para ser declarado antes de App) ---
+        
         // --- COMPONENTE MODAL DE COMENTARIOS ---
         const CommentsModal = ({ isOpen, onClose, video, user }) => {
             const [comments, setComments] = useState([]);
@@ -872,9 +957,178 @@
                 </div>
             );
         };
+        
+        // --- COMPONENTE MODAL DE INVITACIÓN A JUEGOS (NUEVO) ---
+        const GameInviteModal = ({ isOpen, onClose, onSendInvite }) => {
+            const [selectedGame, setSelectedGame] = useState(GAMES_CONFIG[0]);
+            const [inviteLink, setInviteLink] = useState('');
+            const [message, setMessage] = useState('');
+            
+            const handleSend = () => {
+                if (!inviteLink.trim()) return;
+                onSendInvite(selectedGame.name, inviteLink.trim(), message.trim());
+                onClose();
+            };
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
+                    <div className="bg-gray-900 w-full max-w-sm rounded-xl p-6 border border-gray-700 shadow-2xl">
+                        <h3 className="text-white font-bold text-xl mb-4 flex items-center justify-between">
+                            Invitar a Jugar <Gamepad size={24} className="text-cyan-400"/>
+                        </h3>
+
+                        <div className="mb-4">
+                            <label className="block text-sm font-medium text-gray-400 mb-2">Selecciona un Juego</label>
+                            <div className="flex flex-wrap gap-2">
+                                {GAMES_CONFIG.map(game => (
+                                    <button
+                                        key={game.name}
+                                        onClick={() => setSelectedGame(game)}
+                                        className={`flex items-center gap-2 p-2 rounded-full border transition-all 
+                                            ${selectedGame.name === game.name ? 'bg-cyan-600 border-cyan-400 text-white shadow-md' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}`}
+                                    >
+                                        <img src={game.logo} alt={game.name} className="w-5 h-5 rounded-full"/>
+                                        <span className="text-sm">{game.name}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <label className="block text-sm font-medium text-gray-400 mb-2 mt-4">Enlace de Partida ({selectedGame.name})</label>
+                        <input
+                            type="text"
+                            value={inviteLink}
+                            onChange={(e) => setInviteLink(e.target.value)}
+                            placeholder={selectedGame.placeholder}
+                            className="w-full bg-gray-800 text-white p-3 rounded-lg border border-gray-700 outline-none mb-4"
+                        />
+                        
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Mensaje (Opcional)</label>
+                         <textarea 
+                            value={message}
+                            onChange={(e) => setMessage(e.target.value)}
+                            placeholder="¡Vamos a ganar!"
+                            className="w-full bg-gray-800 text-white p-3 rounded-lg border border-gray-700 outline-none resize-none h-20 mb-4"
+                        />
 
 
-        // --- PANTALLAS ---
+                        <button
+                            onClick={handleSend}
+                            disabled={!inviteLink.trim()}
+                            className="w-full py-3.5 bg-white text-black font-bold rounded-xl disabled:opacity-50 hover:bg-gray-200 transition shadow-lg"
+                        >
+                            Enviar Invitación
+                        </button>
+                        <button onClick={onClose} className="w-full text-gray-400 text-sm mt-3">Cerrar</button>
+
+                    </div>
+                </div>
+            );
+        };
+        
+        // --- COMPONENTE MODAL PARA COMPARTIR VIDEO (MOVIdo para ser declarado antes de App) ---
+        const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => { // FIX: Agregado videoId
+            const [selectedChat, setSelectedChat] = useState(null);
+
+            const handleSend = async () => {
+                if (!user?.uid || !selectedChat || !videoId) return; // FIX: Verificado videoId
+                
+                const message = {
+                    type: 'video',
+                    videoId: videoId, // FIX: Usado la prop videoId
+                    senderId: user.uid,
+                    createdAt: new Date().toISOString(),
+                };
+                
+                await addDoc(collection(db, 'artifacts', appId, 'chats', selectedChat, 'messages'), message);
+
+                // Lógica de racha
+                const chatRef = doc(db, 'artifacts', appId, 'chats', selectedChat);
+                const chatSnap = await getDoc(chatRef);
+                const chatData = chatSnap.data();
+                
+                const now = new Date().getTime();
+                const lastTime = chatData.streak ? new Date(chatData.streak.lastMessageTime).getTime() : 0;
+                const lastSender = chatData.streak ? chatData.streak.lastSenderId : null;
+                const currentCount = chatData.streak ? chatData.streak.count : 0;
+                
+                const isWithin24Hours = (now - lastTime) < 86400000;
+                const streakLost = (now - lastTime) >= 86400000;
+
+                let newCount = currentCount;
+
+                if (currentCount === 0) {
+                    newCount = 1; 
+                } else if (isWithin24Hours && lastSender !== user.uid) {
+                    newCount = currentCount + 1; 
+                } else if (streakLost) {
+                    newCount = 1; 
+                } else if (lastSender === user.uid) {
+                    newCount = currentCount; 
+                }
+
+                await updateDoc(chatRef, {
+                    streak: {
+                        count: newCount,
+                        lastMessageTime: new Date().toISOString(),
+                        lastSenderId: user.uid
+                    }
+                });
+                
+                onClose();
+            };
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
+                    <div className="bg-gray-900 w-full rounded-t-2xl p-6 border-t border-gray-700 animate-in slide-in-from-bottom">
+                        <h3 className="text-white font-bold text-lg mb-4 flex justify-between items-center">
+                            Compartir en Chat
+                            <button onClick={onClose}><X size={20} className="text-gray-400"/></button>
+                        </h3>
+
+                        <div className="max-h-64 overflow-y-auto space-y-3 mb-6">
+                            {chats.filter(c => c.status === 'accepted').map(chat => {
+                                const otherUid = chat.participants.find(uid => uid !== user.uid);
+                                const otherUser = chat.participantsData?.[otherUid];
+                                const otherName = otherUser?.displayName || "Usuario";
+                                const isSelected = selectedChat === chat.id;
+
+                                return (
+                                    <div 
+                                        key={chat.id} 
+                                        onClick={() => setSelectedChat(chat.id)}
+                                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${isSelected ? 'bg-cyan-600 border-cyan-400' : 'bg-gray-800/40 border-gray-700 hover:bg-gray-800'}`}
+                                    >
+                                        {/* Foto de Perfil */}
+                                        <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0">
+                                            <img src={otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`} className="w-full h-full object-cover"/>
+                                        </div>
+                                        <span className="font-medium text-white">{otherName}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        
+                        <button 
+                            onClick={handleSend}
+                            disabled={!selectedChat}
+                            className="w-full py-3.5 bg-white text-black font-bold rounded-xl disabled:opacity-50 hover:bg-gray-200 transition"
+                        >
+                            Enviar Video
+                        </button>
+
+                    </div>
+                </div>
+            );
+        };
+
+
+        // --- RESTO DE PANTALLAS Y LOGICA ---
+        
         const AuthScreen = () => {
             const [isRegistering, setIsRegistering] = useState(false);
             const [username, setUsername] = useState("");
@@ -1029,8 +1283,7 @@
                             className="text-cyan-400 font-semibold cursor-pointer pointer-events-auto hover:underline"
                             onClick={(e) => {
                                 e.stopPropagation();
-                                // Aquí se necesitaría buscar el UID por username para ir al perfil
-                                // Como no tenemos un mapa UID/username, navegaremos usando el username como ID por simplicidad (aunque no es lo ideal en un sistema real)
+                                // Aquí usamos el username como targetId para navegar al perfil
                                 onVisitProfile(username); 
                             }}
                         >
@@ -1466,6 +1719,36 @@
             );
         };
 
+        // --- FUNCIÓN PARA OBTENER MENSAJES NO LEÍDOS ---
+        const getUnreadMessagesCount = (chats, currentUserId) => {
+            return chats.reduce((acc, chat) => {
+                const otherUid = chat.participants.find(uid => uid !== currentUserId);
+                // Usamos el campo 'lastRead' del usuario actual
+                const lastReadTime = chat.participantsData?.[currentUserId]?.lastRead || 0;
+                
+                // Si el chat tiene una marca de tiempo del último mensaje y es posterior a nuestra última lectura
+                if (chat.lastMessageTime && new Date(chat.lastMessageTime).getTime() > new Date(lastReadTime).getTime()) {
+                    // Contamos este chat como no leído
+                    acc++;
+                }
+                return acc;
+            }, 0);
+        };
+        // --- FUNCIÓN PARA OBTENER MENSAJES NO LEÍDOS POR CHAT (Detalle) ---
+        const getUnreadCountForChat = (chat, currentUserId) => {
+             const lastReadTime = chat.participantsData?.[currentUserId]?.lastRead || 0;
+             const lastMessageTime = chat.lastMessageTime ? new Date(chat.lastMessageTime).getTime() : 0;
+             
+             // Simplificamos la lógica: si el último mensaje fue enviado por el otro usuario y es más reciente que nuestra última lectura.
+             const isFromOtherUser = chat.lastSenderId !== currentUserId;
+             const isUnread = lastMessageTime > new Date(lastReadTime).getTime();
+
+             // Este contador es una SIMULACIÓN de chat no leído, no cuenta el número exacto de mensajes.
+             // Para un conteo exacto se requeriría una subcolección dedicada o un campo 'unreadCount' por usuario.
+             // Aquí devolvemos 1 (no leído) o 0 (leído) basado en la marca de tiempo.
+             return isUnread && isFromOtherUser ? 1 : 0; 
+        }
+
         const InboxView = ({ user, onOpenChat, notifications, chats, onlineStatus }) => {
             const [tab, setTab] = useState('chats'); 
             // Crear un mapa de datos de todos los usuarios de chats para facilitar la búsqueda
@@ -1513,6 +1796,9 @@
 
                             // Verificar estado online
                             const isOnline = onlineStatus[otherUid]?.online || false;
+                            
+                            // Contador de mensajes no leídos
+                            const unreadCount = getUnreadCountForChat(chat, user.uid);
 
                             return (
                                 <div key={chat.id} onClick={() => onOpenChat(chat.id, otherUser)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800">
@@ -1522,6 +1808,12 @@
                                         {/* Indicador Online (Real) */}
                                         {isOnline && (
                                             <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-gray-900"></div>
+                                        )}
+                                        {/* Contador de mensajes no leídos */}
+                                        {unreadCount > 0 && (
+                                            <div className="absolute top-0 right-0 w-5 h-5 bg-red-600 rounded-full flex items-center justify-center text-xs font-bold text-white border-2 border-gray-900">
+                                                {unreadCount}
+                                            </div>
                                         )}
                                     </div>
                                     <div className="flex-1">
@@ -1568,12 +1860,24 @@
             const [replyTo, setReplyTo] = useState(null);
             const [isTyping, setIsTyping] = useState(false);
             const [showStickerModal, setShowStickerModal] = useState(false); // NUEVO
+            const [showGameInviteModal, setShowGameInviteModal] = useState(false); // NUEVO
             const endRef = useRef(null);
             
             const [isRecording, setIsRecording] = useState(false);
             const mediaRecorderRef = useRef(null);
             const audioChunksRef = useRef([]);
             const typingTimerRef = useRef(null);
+            
+            // Marca de tiempo de la última lectura (para contador de no leídos)
+            const markAsRead = useCallback(async () => {
+                if (!user?.uid || !chatId) return;
+                const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
+                // Solo actualizamos si la marca de tiempo local es más nueva que la registrada
+                await updateDoc(chatRef, { 
+                    [`participantsData.${user.uid}.lastRead`]: new Date().toISOString()
+                });
+            }, [user?.uid, chatId]);
+
 
             // Listener de mensajes
             useEffect(() => {
@@ -1583,9 +1887,15 @@
                 const unsub = onSnapshot(q, s => {
                     setMessages(s.docs.map(d => ({id: d.id, ...d.data(), chatId})) // Añadir chatId al mensaje para la actualización de audio
                 );
+                // Marcar como leído al recibir mensajes
+                markAsRead();
                 });
+                
+                // Marcar como leído al entrar en el chat
+                markAsRead();
+                
                 return () => unsub();
-            }, [chatId]);
+            }, [chatId, markAsRead]);
             
             // Scroll al final al cargar mensajes (siempre después de que se cargan)
             useEffect(() => {
@@ -1646,14 +1956,14 @@
                 };
             }, [chatId]);
             
-            const updateStreak = async () => {
+            const updateStreak = async (lastMessageTime) => {
                 if (!user?.uid) return;
                 const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
                 const snap = await getDoc(chatRef);
                 if (!snap.exists()) return;
 
                 const chatData = snap.data();
-                const now = new Date().getTime();
+                const now = new Date(lastMessageTime).getTime();
                 
                 const lastTime = chatData.streak ? new Date(chatData.streak.lastMessageTime).getTime() : 0;
                 const lastSender = chatData.streak ? chatData.streak.lastSenderId : null;
@@ -1677,9 +1987,11 @@
                 await updateDoc(chatRef, {
                     streak: {
                         count: newCount,
-                        lastMessageTime: new Date().toISOString(),
+                        lastMessageTime: new Date(lastMessageTime).toISOString(),
                         lastSenderId: user.uid
-                    }
+                    },
+                    lastMessageTime: new Date(lastMessageTime).toISOString(), // Actualizar el timestamp del chat
+                    lastSenderId: user.uid
                 });
             };
             
@@ -1692,19 +2004,22 @@
             const sendMessage = async (type, content, fileDetails = null) => {
                 if (!user?.uid) return; // FIX: Asegurar que el UID existe antes de enviar
                 
+                const messageTime = new Date().toISOString();
+
                 const message = {
                     type,
                     senderId: user.uid,
-                    createdAt: new Date().toISOString(),
+                    createdAt: messageTime,
                     ...(type === 'text' || type === 'audio_tts' ? { text: content } : { fileUrl: content, fileType: fileDetails?.fileType || 'file' }),
                     ...(type === 'video' ? { videoId: content } : {}),
                     ...(type === 'sticker' ? { fileUrl: content } : {}), // Para stickers
+                    ...(type === 'game_invite' ? { data: content } : {}), // Para invitación a juego
                     ...(replyTo ? { replyTo: { text: replyTo.text, type: replyTo.type, senderId: replyTo.senderId } } : {}),
                     ...(type === 'audio_tts' ? { fileUrl: fileDetails?.fileUrl } : {}) // Para el TTS, si la URL ya se generó
                 };
 
                 await addDoc(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), message);
-                await updateStreak(); 
+                await updateStreak(messageTime); 
                 setTypingStatus(false); 
                 
                 const chatDoc = await getDoc(doc(db, 'artifacts', appId, 'chats', chatId));
@@ -1718,7 +2033,7 @@
                         fromUser: user.uid, 
                         fromName: userData.displayName, 
                         avatar: userData.photoURL, 
-                        createdAt: new Date().toISOString()
+                        createdAt: messageTime // Usar el mismo timestamp
                     });
                 }
             };
@@ -1728,16 +2043,19 @@
                 sendMessage('sticker', url);
                 setShowStickerModal(false);
             };
+            
+            // NUEVO: Manejar el envío de invitación a juego
+            const handleSendGameInvite = (gameName, inviteLink, message) => {
+                const data = { gameName, inviteLink, message };
+                sendMessage('game_invite', data);
+                setShowGameInviteModal(false);
+            };
 
             const sendTextOrAudio = () => {
                 if(!txt.trim()) return;
 
-                // Si el mensaje es largo, lo enviamos como texto simple que el componente de burbuja interpretará como TTS a generar
-                if (txt.trim().length > 100) {
-                    sendMessage('text', txt.trim());
-                } else {
-                    sendMessage('text', txt.trim());
-                }
+                // Enviamos como texto, el componente de burbuja decidirá si es TTS (largo) o texto simple (corto).
+                sendMessage('text', txt.trim());
                 
                 setTxt("");
                 setReplyTo(null);
@@ -1790,7 +2108,6 @@
                     };
                     
                     recorder.onstop = async () => {
-                        // Eliminado setTxt("Procesando audio...")
                         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
                         const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: 'audio/webm' });
                         await sendFile(audioFile); 
@@ -1799,7 +2116,6 @@
 
                     recorder.start();
                     setIsRecording(true);
-                    // Eliminado setTxt("Grabando...")
                     
                 } catch (err) {
                     console.error('Error al acceder al micrófono:', err.message);
@@ -1829,15 +2145,6 @@
                         sendTextOrAudio();
                     }
                 }
-            };
-            
-            // Función para enviar texto como audio TTS (Botón dedicado)
-            const sendAsTTS = () => {
-                if (!txt.trim()) return;
-                // Envía como tipo especial 'audio_tts' para que el componente de burbuja lo genere
-                sendMessage('text', txt.trim());
-                setTxt("");
-                setReplyTo(null);
             };
 
             const isSendButtonVisible = txt.trim().length > 0 || !!file || isRecording;
@@ -1910,6 +2217,14 @@
                                 <Smile size={20}/>
                             </button>
                             
+                            {/* Botón de Invitación a Juego */}
+                            <button 
+                                onClick={() => setShowGameInviteModal(true)}
+                                className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0"
+                            >
+                                <Gamepad size={20} className="text-cyan-400"/>
+                            </button>
+                            
                             {/* Botón para Adjuntar */}
                             <label className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0">
                                 <FileText size={18}/>
@@ -1921,7 +2236,7 @@
                                 value={file ? file.name : txt} // Muestra el nombre del archivo o el texto
                                 onChange={handleTextChange} 
                                 className="chat-input flex-1 bg-gray-800 text-white p-3 rounded-2xl outline-none resize-none max-h-40" 
-                                placeholder={isRecording ? "Grabando audio..." : (file ? `Archivo: ${file.name}` : "Mensaje...")}
+                                placeholder={"Mensaje..."} // Texto estático para interfaz limpia
                                 onKeyDown={handleKeyDown}
                                 disabled={isRecording}
                                 rows={1} // Fila inicial mínima
@@ -1935,7 +2250,7 @@
                                         {/* Botón de TTS (Solo si hay texto y es largo) */}
                                         {txt.trim() && txt.trim().length > 100 && !file && (
                                             <button 
-                                                onClick={sendAsTTS} 
+                                                onClick={sendTextOrAudio} 
                                                 className="w-10 h-10 bg-cyan-600 rounded-full text-white hover:bg-cyan-500 transition shadow-lg flex items-center justify-center"
                                                 title="Enviar como Audio (TTS)"
                                             >
@@ -1970,103 +2285,11 @@
                         onClose={() => setShowStickerModal(false)} 
                         onSelectSticker={handleStickerSelect}
                     />
-                </div>
-            );
-        };
-
-        const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => { // FIX: Agregado videoId
-            const [selectedChat, setSelectedChat] = useState(null);
-
-            const handleSend = async () => {
-                if (!user?.uid || !selectedChat || !videoId) return; // FIX: Verificado videoId
-                
-                const message = {
-                    type: 'video',
-                    videoId: videoId, // FIX: Usado la prop videoId
-                    senderId: user.uid,
-                    createdAt: new Date().toISOString(),
-                };
-                
-                await addDoc(collection(db, 'artifacts', appId, 'chats', selectedChat, 'messages'), message);
-
-                // Lógica de racha
-                const chatRef = doc(db, 'artifacts', appId, 'chats', selectedChat);
-                const chatSnap = await getDoc(chatRef);
-                const chatData = chatSnap.data();
-                
-                const now = new Date().getTime();
-                const lastTime = chatData.streak ? new Date(chatData.streak.lastMessageTime).getTime() : 0;
-                const lastSender = chatData.streak ? chatData.streak.lastSenderId : null;
-                const currentCount = chatData.streak ? chatData.streak.count : 0;
-                
-                const isWithin24Hours = (now - lastTime) < 86400000;
-                const streakLost = (now - lastTime) >= 86400000;
-
-                let newCount = currentCount;
-
-                if (currentCount === 0) {
-                    newCount = 1; 
-                } else if (isWithin24Hours && lastSender !== user.uid) {
-                    newCount = currentCount + 1; 
-                } else if (streakLost) {
-                    newCount = 1; 
-                } else if (lastSender === user.uid) {
-                    newCount = currentCount; 
-                }
-
-                await updateDoc(chatRef, {
-                    streak: {
-                        count: newCount,
-                        lastMessageTime: new Date().toISOString(),
-                        lastSenderId: user.uid
-                    }
-                });
-                
-                onClose();
-            };
-
-            if (!isOpen) return null;
-
-            return (
-                <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
-                    <div className="bg-gray-900 w-full rounded-t-2xl p-6 border-t border-gray-700 animate-in slide-in-from-bottom">
-                        <h3 className="text-white font-bold text-lg mb-4 flex justify-between items-center">
-                            Compartir en Chat
-                            <button onClick={onClose}><X size={20} className="text-gray-400"/></button>
-                        </h3>
-
-                        <div className="max-h-64 overflow-y-auto space-y-3 mb-6">
-                            {chats.filter(c => c.status === 'accepted').map(chat => {
-                                const otherUid = chat.participants.find(uid => uid !== user.uid);
-                                const otherUser = chat.participantsData?.[otherUid];
-                                const otherName = otherUser?.displayName || "Usuario";
-                                const isSelected = selectedChat === chat.id;
-
-                                return (
-                                    <div 
-                                        key={chat.id} 
-                                        onClick={() => setSelectedChat(chat.id)}
-                                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${isSelected ? 'bg-cyan-600 border-cyan-400' : 'bg-gray-800/40 border-gray-700 hover:bg-gray-800'}`}
-                                    >
-                                        {/* Foto de Perfil */}
-                                        <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0">
-                                            <img src={otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`} className="w-full h-full object-cover"/>
-                                        </div>
-                                        <span className="font-medium text-white">{otherName}</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        
-                        <button 
-                            onClick={handleSend}
-                            disabled={!selectedChat}
-                            className="w-full py-3.5 bg-white text-black font-bold rounded-xl disabled:opacity-50 hover:bg-gray-200 transition"
-                        >
-                            Enviar Video
-                        </button>
-
-                    </div>
+                    <GameInviteModal 
+                        isOpen={showGameInviteModal} 
+                        onClose={() => setShowGameInviteModal(false)} 
+                        onSendInvite={handleSendGameInvite}
+                    />
                 </div>
             );
         };
@@ -2299,8 +2522,7 @@
                     <div 
                         ref={feedRef} 
                         onScroll={handleScroll} 
-                        className={`flex-1 overflow-y-auto snap-y snap-mandatory no-scrollbar bg-gray-900 ${activeTab !== 'home' ? 'hidden' : ''}`}
-                        style={{ scrollSnapStop: 'always' }}
+                        className={`flex-1 overflow-y-scroll snap-y snap-mandatory no-scrollbar bg-gray-900 ${activeTab !== 'home' ? 'hidden' : ''}`}
                     >
                         {currentFeedVideos.length > 0 ? currentFeedVideos.map((v, i) => (
                             <VideoPlayer 
@@ -2354,8 +2576,11 @@
                         <button onClick={()=>setActiveTab('inbox')} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100 relative">
                             <img src={ICONS.bandeja} className="w-7 h-7 invert"/>
                             <span className="text-[10px] font-medium text-white">Bandeja</span>
-                            {notifications.some(n => new Date().getTime() - new Date(n.createdAt).getTime() < 86400000) && (
-                                <span className="absolute top-0 right-3 w-2.5 h-2.5 bg-red-500 rounded-full border border-black"></span>
+                            {/* Contador total de chats no leídos */}
+                            {getUnreadMessagesCount(chats, user.uid) > 0 && (
+                                <span className="absolute top-0 right-3 w-4 h-4 bg-red-600 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-black">
+                                    {getUnreadMessagesCount(chats, user.uid)}
+                                </span>
                             )}
                         </button>
                         <button onClick={()=>{setViewingProfile(null); setActiveTab('profile')}} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
