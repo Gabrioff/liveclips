@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>LiveClips</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Importante para que React funcione en el navegador -->
+    <!-- Babel: Traduce React a JS nativo en el navegador -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <style>
@@ -121,7 +121,7 @@
             const configSnap = await getDoc(configRef);
             if (!configSnap.exists()) throw new Error("Falta configuración GitHub");
             const { token, owner, repo } = configSnap.data();
-            setStatus && setStatus("Procesando...");
+            setStatus && setStatus(`Procesando archivo... (${file.name})`);
             const toBase64 = (file) => new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(file);
@@ -129,7 +129,7 @@
                 reader.onerror = reject;
             });
             const content = await toBase64(file);
-            setStatus && setStatus("Subiendo...");
+            setStatus && setStatus("Subiendo a GitHub...");
             const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
                 method: 'PUT',
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -139,6 +139,7 @@
                 const errorBody = await response.json();
                  throw new Error(`Error GitHub: ${errorBody.message || response.statusText}`);
             }
+            setStatus && setStatus("¡Subida completa!");
             return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
         };
 
@@ -456,6 +457,7 @@
             }, [targetUserId, currentUser]);
 
             const handleFollow = async () => {
+                if (!currentUser) return; // Seguridad extra
                 const myRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'following', targetUserId);
                 const targetPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId);
                 const myPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.uid);
@@ -738,7 +740,9 @@
                                         <p className="font-bold text-white">@{u.username}</p>
                                         <p className="text-xs text-gray-400 truncate">{u.displayName}</p>
                                     </div>
-                                    <UserPlus size={18} className="text-cyan-400"/>
+                                    <button onClick={(e) => {e.stopPropagation(); onVisitProfile(u.id);}} className="text-cyan-400 p-2 rounded-full hover:bg-gray-700 transition">
+                                        <UserPlus size={18}/>
+                                    </button>
                                 </div>
                             ))}
                         </div>
@@ -752,11 +756,12 @@
             const [tab, setTab] = useState('chats'); 
 
             const myChats = chats.filter(c => c.status === 'accepted');
+            // La solicitud es para mí si mi ID NO es el que creó la solicitud (que está en participants) y el status es pending.
             const requests = chats.filter(c => c.status === 'pending' && c.participants.includes(user.uid));
 
             const handleAccept = async (chatId, targetUid) => {
                 await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted', targetId: null });
-                // Enviar notificación al que solicitó
+                
                 const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
                  await addDoc(collection(db, 'artifacts', appId, 'users', targetUid, 'notifications'), {
                     type: 'message_accept', fromUser: user.uid, fromName: userData.displayName, avatar: userData.photoURL, createdAt: new Date().toISOString()
@@ -852,7 +857,7 @@
                 if (endRef.current) {
                     endRef.current.scrollIntoView({ behavior: 'auto' });
                 }
-            }, [messages.length, activeChatId]);
+            }, [messages.length, chatId]); 
             
             // Listener del Typing Indicator (Obtiene el estado de "escribiendo" del chat doc)
             useEffect(() => {
@@ -991,11 +996,11 @@
                 if (['png', 'jpg', 'jpeg', 'gif'].includes(fileExtension)) fileType = 'image';
                 else if (['mp3', 'wav', 'ogg', 'webm'].includes(fileExtension)) fileType = 'audio';
                 
-                setTxt("Subiendo archivo...");
+                setTxt(`Subiendo ${fileType}...`);
                 const path = `chats/${chatId}/${Date.now()}_${selectedFile.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
                 
                 try {
-                    const url = await uploadToGitHub(selectedFile, path);
+                    const url = await uploadToGitHub(selectedFile, path, (s) => setTxt(s));
                     sendMessage(fileType, url, { fileType });
                 } catch(e) {
                     alert("Error al subir archivo: " + e.message);
@@ -1012,7 +1017,7 @@
                 
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    const options = { mimeType: 'audio/webm' }; // Formato de audio para Web/GitHub
+                    const options = { mimeType: 'audio/webm' }; 
                     const recorder = new MediaRecorder(stream, options);
                     mediaRecorderRef.current = recorder;
                     audioChunksRef.current = [];
@@ -1022,9 +1027,10 @@
                     };
                     
                     recorder.onstop = async () => {
+                        setTxt("Procesando audio...");
                         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
                         const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: 'audio/webm' });
-                        await sendFile(audioFile); // Usar la función sendFile existente para subir a GitHub
+                        await sendFile(audioFile); 
                         stream.getTracks().forEach(track => track.stop()); // Detener el micrófono
                     };
 
@@ -1042,7 +1048,6 @@
                 if (mediaRecorderRef.current && isRecording) {
                     mediaRecorderRef.current.stop();
                     setIsRecording(false);
-                    setTxt("");
                 }
             };
 
@@ -1150,7 +1155,6 @@
             );
         };
 
-        // --- MODAL PARA COMPARTIR VIDEO ---
         const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => {
             const [selectedChat, setSelectedChat] = useState(null);
 
@@ -1222,6 +1226,7 @@
 
         const App = () => {
             const [user, setUser] = useState(null);
+            const [isAuthReady, setIsAuthReady] = useState(false); // NUEVO: Estado de autenticación lista
             const [videos, setVideos] = useState([]);
             const [chats, setChats] = useState([]); 
             const [activeTab, setActiveTab] = useState('home');
@@ -1237,15 +1242,25 @@
             
             const feedRef = useRef(null);
 
-            useEffect(() => onAuthStateChanged(auth, setUser), []);
-
-            // Listener de datos
+            // 1. Listener de Autenticación (Define si el Auth está listo)
             useEffect(() => {
-                if(!user) return;
+                const unsub = onAuthStateChanged(auth, (currentUser) => {
+                    setUser(currentUser);
+                    setIsAuthReady(true); // Una vez que se resuelve, Auth está listo.
+                });
+                return () => unsub();
+            }, []);
+
+            // 2. Listeners de Datos (Solo se ejecutan si Auth está listo Y hay usuario)
+            useEffect(() => {
+                if(!user || !isAuthReady) return;
+                
                 // Videos
                 const unsubVideos = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), orderBy('createdAt', 'desc')), s => setVideos(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                
                 // Chats
                 const unsubChats = onSnapshot(query(collection(db, 'artifacts', appId, 'chats'), where('participants', 'array-contains', user.uid)), s => setChats(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                
                 // Notificaciones
                 const qNotifs = query(collection(db, 'artifacts', appId, 'users', user.uid, 'notifications'), orderBy('createdAt', 'desc'), limit(10));
                 const unsubNotifs = onSnapshot(qNotifs, (snapshot) => {
@@ -1262,7 +1277,7 @@
                 });
                 
                 return () => { unsubVideos(); unsubChats(); unsubNotifs(); };
-            }, [user]);
+            }, [user, isAuthReady]); // Dependencia clave: isAuthReady
 
             const handleScroll = () => {
                 if (feedRef.current && activeTab === 'home') {
@@ -1272,6 +1287,8 @@
             };
 
             const toggleLike = async (video, likerId) => {
+                if (!likerId) return; // Parar si el usuario no está listo
+
                 const likeRef = doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'likes', likerId);
                 const likeSnap = await getDoc(likeRef);
 
@@ -1318,6 +1335,8 @@
             };
 
             const startChat = async (targetUid, targetProfile) => {
+                if (!user) return; // Seguridad extra
+                
                 const chatId = getChatId(user.uid, targetUid);
                 const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
                 const chatSnap = await getDoc(chatRef);
@@ -1343,6 +1362,16 @@
             };
 
             const currentFeedVideos = feedMode === 'global' ? videos : profileFeedVideos;
+
+            // Muestra pantalla de carga si AUTH no está listo
+            if (!isAuthReady) {
+                return (
+                    <div className="flex flex-col items-center justify-center h-screen bg-gray-950 text-white">
+                        <Loader2 className="animate-spin text-white/50" size={32}/>
+                        <p className="mt-4 text-gray-500">Cargando autenticación...</p>
+                    </div>
+                );
+            }
 
             if(!user) return <AuthScreen />;
 
