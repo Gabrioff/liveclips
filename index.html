@@ -15,6 +15,7 @@
             color: white; 
             overflow: hidden; 
             overscroll-behavior: none;
+            font-family: 'Inter', sans-serif;
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
@@ -65,24 +66,86 @@
             gap: 0.75rem; /* space-y-3 */
             padding-top: 1rem; /* p-4 */
         }
+
+        /* Estilos de la forma de onda de audio (simulación) */
+        .waveform {
+            display: flex;
+            align-items: center;
+            height: 30px;
+            width: 150px;
+            overflow: hidden;
+            gap: 1px;
+            opacity: 0.8;
+        }
+        .waveform-bar {
+            width: 2px;
+            background-color: white;
+            border-radius: 1px;
+            transition: height 0.3s ease-in-out, opacity 0.3s ease-in-out;
+        }
+        .waveform.playing .waveform-bar {
+            animation: bounce 0.5s infinite alternate;
+        }
+        @keyframes bounce {
+            0% { transform: scaleY(0.5); }
+            100% { transform: scaleY(1.0); }
+        }
+        /* Ajuste de delays para simular movimiento */
+        .waveform.playing .waveform-bar:nth-child(even) { animation-delay: 0.1s; }
+        .waveform.playing .waveform-bar:nth-child(3n) { animation-delay: 0.2s; }
+        .waveform.playing .waveform-bar:nth-child(5n) { animation-delay: 0.3s; }
+        
+        /* Estilo para el Textarea */
+        textarea.chat-input {
+            transition: all 0.2s ease-in-out;
+            min-height: 48px;
+            line-height: 1.5;
+            padding-top: 10px;
+            padding-bottom: 10px;
+        }
+        /* Estilo para el botón de comentarios en el video */
+        .comments-btn-bg {
+            background-color: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        /* Clase para el contenedor de video en chat */
+        .chat-video-container {
+            position: relative;
+            width: 150px; /* Tamaño fijo para la miniatura */
+            height: 200px;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .chat-video-play-icon {
+            position: absolute;
+            z-index: 10;
+            background-color: rgba(0, 0, 0, 0.4);
+            border-radius: 50%;
+            padding: 10px;
+        }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18.2.0';
+        import React, { useState, useEffect, useRef, useCallback } from 'https://esm.sh/react@18.2.0';
         import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
         import { 
             Music2, Home, Search, Loader2, AlertTriangle, Copy, Play, Pause, 
             User as UserIcon, Hash, Bell, ArrowLeft, Edit3, Camera, Check, X, 
-            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle, FileText, Mic, Image
+            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle, FileText, Mic, Image, CornerUpLeft, Zap, MessageSquare
         } from 'https://esm.sh/lucide-react@0.344.0';
         
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { 
             getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
-            onAuthStateChanged, signOut, updateProfile
+            onAuthStateChanged, signOut, updateProfile, signInAnonymously, signInWithCustomToken 
         } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         import { 
             getFirestore, collection, doc, onSnapshot, addDoc, getDoc, setDoc, 
@@ -104,16 +167,91 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
         const appId = 'tiktok-glass-universal';
+        
+        // --- VARIABLES GLOBALES DEL ENTORNO DE CANVAS ---
+        const firebaseConfigFromCanvas = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        // --- TUS ICONOS ORIGINALES ---
-        const ICONS = {
-            bandeja: "https://img.icons8.com/?size=100&id=JKQ8C03mfHVD&format=png&color=000000",
-            perfil: "https://img.icons8.com/?size=100&id=AaFA8C8mpiZY&format=png&color=000000",
-            corazon: "https://img.icons8.com/?size=100&id=sSZiheZL0ozl&format=png&color=000000",
-            tendencia: "https://img.icons8.com/?size=100&id=g8O1NN7oS0KJ&format=png&color=000000",
-            compartir: "https://img.icons8.com/?size=100&id=Wv2O2Ve44Are&format=png&color=000000",
-            crear: "https://img.icons8.com/?size=100&id=rrOG2bhnvx0w&format=png&color=000000" 
+
+        // --- CONFIGURACIÓN DE GEMINI API ---
+        const GEMINI_API_KEY = "";
+        const TTS_MODEL = "gemini-2.5-flash-preview-tts";
+        // GIF de racha proporcionado por el usuario
+        const STREAK_GIF_URL = "https://cdn.pixabay.com/animation/2025/06/26/05/26/05-26-59-506_512.gif";
+        const VERIFIED_BADGE_URL = "https://static.vecteezy.com/system/resources/thumbnails/047/309/930/small/verified-badge-profile-icon-png.png";
+
+        // Función auxiliar para convertir Base64 a ArrayBuffer
+        const base64ToArrayBuffer = (base64) => {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
         };
+
+        // Función auxiliar para convertir PCM (audio) a WAV (formato reproducible)
+        const pcmToWav = (pcm16, sampleRate) => {
+            const numChannels = 1;
+            const bytesPerSample = 2; // Int16
+            const blockAlign = numChannels * bytesPerSample;
+            const byteRate = sampleRate * blockAlign;
+            const dataSize = pcm16.byteLength;
+            const buffer = new ArrayBuffer(44 + dataSize);
+            const view = new DataView(buffer);
+            let offset = 0;
+
+            // Riff Chunk
+            view.setUint32(offset, 0x52494646, false); offset += 4; // "RIFF"
+            view.setUint32(offset, 36 + dataSize, true); offset += 4; // ChunkSize
+            view.setUint32(offset, 0x57415645, false); offset += 4; // "WAVE"
+
+            // Fmt Chunk
+            view.setUint32(offset, 0x666d7420, false); offset += 4; // "fmt "
+            view.setUint32(offset, 16, true); offset += 4; // Subchunk1Size (16 for PCM)
+            view.setUint16(offset, 1, true); offset += 2; // AudioFormat (1 for PCM)
+            view.setUint16(offset, numChannels, true); offset += 2; // NumChannels
+            view.setUint32(offset, sampleRate, true); offset += 4; // SampleRate
+            view.setUint32(offset, byteRate, true); offset += 4; // ByteRate
+            view.setUint16(offset, blockAlign, true); offset += 2; // BlockAlign
+            view.setUint16(offset, 16, true); offset += 2; // BitsPerSample
+
+            // Data Chunk
+            view.setUint32(offset, 0x64617461, false); offset += 4; // "data"
+            view.setUint32(offset, dataSize, true); offset += 4; // Subchunk2Size
+            
+            // Write PCM data
+            for (let i = 0; i < pcm16.length; i++) {
+                view.setInt16(offset, pcm16[i], true);
+                offset += 2;
+            }
+
+            return new Blob([view], { type: 'audio/wav' });
+        };
+
+
+        // --- TUS ICONOS ORIGINALES (Ajustando algunos para usar Lucide si es posible) ---
+        const ICONS = {
+            bandeja: "https://img.icons8.com/?size=100&id=JKQ8C03mfHVD&format=png&color=000000", // Notificación
+            perfil: "https://img.icons8.com/?size=100&id=AaFA8C8mpiZY&format=png&color=000000", // Perfil
+            corazon: "https://img.icons8.com/?size=100&id=sSZiheZL0ozl&format=png&color=000000", // Corazón
+            tendencia: "https://img.icons8.com/?size=100&id=g8O1NN7oS0KJ&format=png&color=000000", // Tendencia
+            compartir: "https://img.icons8.com/?size=100&id=Wv2O2Ve44Are&format=png&color=000000", // Compartir
+            crear: "https://img.icons8.com/?size=100&id=rrOG2bhnvx0w&format=png&color=000000", // Crear
+            // ICONO DE RESPONDER SOLICITADO
+            reply: (props) => <CornerUpLeft {...props} />,
+        };
+        
+        // --- COMPONENTE DE INSIGNIA DE VERIFICADO ---
+        const VerifiedBadge = ({ size = 18 }) => (
+            <img 
+                src={VERIFIED_BADGE_URL} 
+                className="inline-block" 
+                style={{ width: size, height: size }} 
+                alt="Verificado"
+            />
+        );
 
         // --- FUNCION PARA SUBIR ARCHIVOS A GITHUB ---
         const uploadToGitHub = async (file, path, setStatus) => {
@@ -121,7 +259,7 @@
             const configSnap = await getDoc(configRef);
             if (!configSnap.exists()) throw new Error("Falta configuración GitHub");
             const { token, owner, repo } = configSnap.data();
-            setStatus && setStatus(`Procesando archivo... (${file.name})`);
+            // Eliminado el mensaje de "Procesando archivo..."
             const toBase64 = (file) => new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(file);
@@ -129,7 +267,7 @@
                 reader.onerror = reject;
             });
             const content = await toBase64(file);
-            setStatus && setStatus("Subiendo a GitHub...");
+            // Eliminado el mensaje de "Subiendo a GitHub..."
             const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
                 method: 'PUT',
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -139,12 +277,171 @@
                 const errorBody = await response.json();
                  throw new Error(`Error GitHub: ${errorBody.message || response.statusText}`);
             }
-            setStatus && setStatus("¡Subida completa!");
+            // Eliminado el mensaje de "Subida completa!"
             return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
         };
 
         const getChatId = (uid1, uid2) => [uid1, uid2].sort().join('_');
 
+        // --- COMPONENTE AUDIO PLAYER (BONITO) ---
+        const AudioMessage = ({ audioUrl, isMe, onGeneration, text }) => {
+            const audioRef = useRef(new Audio(audioUrl));
+            const [isPlaying, setIsPlaying] = useState(false);
+            const [isLoading, setIsLoading] = useState(!audioUrl);
+            const [error, setError] = useState(null);
+            
+            // Simulación de la forma de onda
+            const bars = Array(15).fill(0).map((_, i) => (
+                <div key={i} className="waveform-bar" style={{height: `${Math.random() * 80 + 20}%`}}></div>
+            ));
+
+            // Generar audio si no hay URL
+            useEffect(() => {
+                if (audioUrl) {
+                    // Si ya tenemos URL, solo cargamos el audio y salimos
+                    audioRef.current.src = audioUrl;
+                    setIsLoading(false);
+                    return;
+                }
+                
+                // Si no tenemos URL, procedemos a generar TTS
+                if (!text || text.length < 5) {
+                    setError("Texto demasiado corto para generar audio.");
+                    setIsLoading(false);
+                    return;
+                }
+                
+                const generateAndSetAudio = async () => {
+                    setIsLoading(true);
+                    setError(null);
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+                    
+                    const payload = {
+                        contents: [{
+                            parts: [{ text: `Di esto con voz alegre y clara: ${text}` }]
+                        }],
+                        generationConfig: {
+                            responseModalities: ["AUDIO"],
+                            speechConfig: {
+                                voiceConfig: {
+                                    prebuiltVoiceConfig: { voiceName: "Puck" }
+                                }
+                            }
+                        }
+                    };
+                    
+                    try {
+                        let response;
+                        for (let i = 0; i < 3; i++) { // Intento de reintento
+                            response = await fetch(apiUrl, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+                            if (response.ok) break;
+                            await new Promise(resolve => setTimeout(resolve, 2 ** i * 1000)); // Espera exponencial
+                        }
+                        
+                        if (!response.ok) throw new Error("Error de API: " + response.statusText);
+                        
+                        const result = await response.json();
+                        const part = result?.candidates?.[0]?.content?.parts?.[0];
+                        const audioData = part?.inlineData?.data;
+                        const mimeType = part?.inlineData?.mimeType;
+
+                        if (audioData && mimeType && mimeType.startsWith("audio/L16")) {
+                            // Extraer sample rate de mimeType
+                            const match = mimeType.match(/rate=(\d+)/);
+                            const sampleRate = match ? parseInt(match[1], 10) : 24000; 
+
+                            const pcmData = base64ToArrayBuffer(audioData);
+                            const pcm16 = new Int16Array(pcmData);
+                            const wavBlob = pcmToWav(pcm16, sampleRate);
+                            const newAudioUrl = URL.createObjectURL(wavBlob);
+                            
+                            audioRef.current.src = newAudioUrl;
+                            onGeneration(newAudioUrl); // Devuelve la URL al padre para guardarla en Firestore
+                            
+                        } else {
+                            throw new Error("Respuesta de audio no válida.");
+                        }
+                    } catch (e) {
+                        setError("Falló la generación de audio: " + e.message);
+                    } finally {
+                        setIsLoading(false);
+                    }
+                };
+
+                generateAndSetAudio();
+                
+                return () => {
+                    if (audioRef.current.src) URL.revokeObjectURL(audioRef.current.src);
+                };
+            }, [text, audioUrl, onGeneration]);
+
+
+            useEffect(() => {
+                const audio = audioRef.current;
+                const onEnded = () => setIsPlaying(false);
+                audio.addEventListener('ended', onEnded);
+                audio.addEventListener('pause', onEnded);
+                return () => {
+                    audio.removeEventListener('ended', onEnded);
+                    audio.removeEventListener('pause', onEnded);
+                };
+            }, []);
+
+            const togglePlay = () => {
+                const audio = audioRef.current;
+                if (!audio.src) return;
+
+                if (isPlaying) {
+                    audio.pause();
+                } else {
+                    audio.play().catch(e => setError("Error al reproducir: " + e.message));
+                }
+                setIsPlaying(!isPlaying);
+            };
+
+            const backgroundColor = isMe ? 'bg-green-600' : 'bg-cyan-600';
+            const playIconColor = isMe ? 'text-green-600 fill-white' : 'text-cyan-600 fill-white';
+
+            if (isLoading) {
+                return (
+                    <div className="flex items-center gap-2 p-2 bg-gray-800 rounded-xl text-xs text-gray-400">
+                        <Loader2 size={16} className="animate-spin" />
+                        <span>Generando audio...</span>
+                    </div>
+                );
+            }
+
+            if (error) {
+                return (
+                    <div className="flex items-center gap-2 p-2 bg-red-800/50 rounded-xl text-xs text-red-300">
+                        <AlertTriangle size={16} />
+                        <span>Error de audio</span>
+                    </div>
+                );
+            }
+
+            return (
+                <div 
+                    onClick={togglePlay} 
+                    className={`flex items-center gap-3 p-2 rounded-xl cursor-pointer shadow-md w-fit max-w-full ${backgroundColor}`}
+                >
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center bg-white ${playIconColor}`}>
+                        {isPlaying ? <Pause size={16} fill="currentColor" className="text-black" /> : <Play size={16} fill="currentColor" className="text-black ml-0.5" />}
+                    </div>
+                    <div className={`waveform ${isPlaying ? 'playing' : ''}`}>
+                        {bars}
+                    </div>
+                    <span className="text-white text-xs whitespace-nowrap">
+                        {isPlaying ? 'Reproduciendo...' : 'Toca para oír'}
+                    </span>
+                </div>
+            );
+        };
+        
         // --- COMPONENTE NOTIFICACIÓN TOAST ---
         const ToastNotification = ({ notif, onClose }) => {
             useEffect(() => {
@@ -174,34 +471,140 @@
             );
         };
         
+        // --- CHAT: COMPONENTE DE MENSAJE CON MINiatura DE VIDEO ---
+        const ChatVideoPreview = ({ video, isMe }) => {
+            const [isPlaying, setIsPlaying] = useState(false);
+            const videoRef = useRef(null);
+            
+            const togglePlay = () => {
+                if (!videoRef.current) return;
+
+                if (isPlaying) {
+                    videoRef.current.pause();
+                    setIsPlaying(false);
+                } else {
+                    videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+                        videoRef.current.muted = true;
+                        videoRef.current.play().then(() => setIsPlaying(true)).catch(console.error);
+                    });
+                }
+            };
+
+            return (
+                <div 
+                    className="chat-video-container bg-black/50 shadow-xl"
+                    onClick={togglePlay}
+                >
+                    <video
+                        ref={videoRef}
+                        src={video.url}
+                        className="w-full h-full object-cover transition-opacity duration-300"
+                        muted={!isPlaying}
+                        loop
+                        playsInline
+                        preload="metadata"
+                        style={{ opacity: isPlaying ? 1 : 0.8 }}
+                    />
+                    
+                    {!isPlaying && (
+                        <div className="chat-video-play-icon">
+                            <Play size={30} className="text-white fill-white" />
+                        </div>
+                    )}
+
+                    <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
+                        <p className="text-xs font-bold text-white truncate">{video.description || 'Video Compartido'}</p>
+                        <p className="text-[10px] text-gray-300">@{video.authorName}</p>
+                    </div>
+                </div>
+            );
+        };
+        
         // --- CHAT: COMPONENTE DE MENSAJE CON MENÚ DE CONTEXTO ---
-        const MessageBubble = ({ message, isMe, onDelete, onReply, videos }) => {
+        const MessageBubble = ({ message, isMe, onDelete, onReply, videos, onUpdateAudioUrl }) => {
             const [showMenu, setShowMenu] = useState(false);
+            const pressTimer = useRef(null);
+            
+            // Buscar la información completa del video (necesaria para la miniatura)
             const video = message.type === 'video' ? videos.find(v => v.id === message.videoId) : null;
             
-            const handlePress = () => {
-                setShowMenu(true);
-                setTimeout(() => setShowMenu(false), 3000); // Cerrar después de 3s
+            // Función para actualizar el audio generado en Firestore
+            const handleAudioUrlUpdate = async (newUrl) => {
+                // Solo actualiza si es un mensaje de texto que se convirtió en audio TTS
+                if (message.type === 'text' && !message.fileUrl) {
+                    await updateDoc(doc(db, 'artifacts', appId, 'chats', message.chatId, 'messages', message.id), { 
+                        fileUrl: newUrl, 
+                        type: 'audio_tts' // Nuevo tipo para diferenciarlo del audio de micrófono
+                    });
+                }
+            };
+
+            // Inicia el temporizador al presionar
+            const handleMouseDown = () => {
+                clearTimeout(pressTimer.current);
+                pressTimer.current = setTimeout(() => {
+                    setShowMenu(true);
+                    // Ocultar el menú después de un tiempo
+                    setTimeout(() => setShowMenu(false), 5000); 
+                }, 500); // 500ms para "presionar"
+            };
+
+            // Cancela el temporizador al soltar
+            const handleMouseUp = () => {
+                clearTimeout(pressTimer.current);
             };
 
             const isGif = message.type === 'image' && (message.fileUrl.toLowerCase().endsWith('.gif') || message.fileUrl.toLowerCase().includes('.gif'));
             const fileIcon = message.fileType === 'audio' ? <Mic size={16} className={isMe ? 'text-black' : 'text-white'}/> : <FileText size={16} className={isMe ? 'text-black' : 'text-white'}/>;
+            
+            // Si el mensaje es de texto y tiene fileUrl (generado por TTS), lo tratamos como audio_tts
+            const isAudioOrTTS = message.type === 'audio' || message.type === 'audio_tts' || (message.type === 'text' && message.fileUrl);
+
+            // Ajuste de posición del botón de respuesta para que esté pegado
+            const replyButtonPositionClass = isMe ? 'right-[100%] mr-2' : 'left-[100%] ml-2';
 
             return (
-                <div className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative`}>
-                    <div 
-                        onDoubleClick={handlePress} 
-                        onClick={handlePress} 
-                        className={`max-w-[70%] p-3 rounded-2xl text-sm transition-all relative ${isMe ? 'bg-white text-black' : 'bg-gray-800 text-white'} ${showMenu ? 'scale-[1.02] shadow-lg' : ''}`}
+                <div 
+                    className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative group`}
+                    // Usamos eventos de ratón/táctiles para mostrar el menú de acción
+                    onMouseDown={handleMouseDown}
+                    onMouseUp={handleMouseUp}
+                    onTouchStart={handleMouseDown}
+                    onTouchEnd={handleMouseUp}
+                    onTouchCancel={handleMouseUp}
+                >
+                    
+                    {/* Botón de Respuesta Rápida (Pegado al mensaje) */}
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onReply(message); 
+                            setShowMenu(false);
+                        }} 
+                        // Posición relativa al final de la burbuja (left: 100% o right: 100%)
+                        className={`absolute z-20 transition-all duration-200 p-1 bg-gray-900 border border-gray-700 rounded-full shadow-lg text-white hover:bg-gray-800 top-1/2 -translate-y-1/2 
+                            ${replyButtonPositionClass}
+                            ${showMenu ? 'opacity-100' : 'opacity-0'}`}
                     >
-                        {/* Menú de Contexto */}
-                        {showMenu && (
-                            <div className={`absolute -top-8 ${isMe ? 'right-0' : 'left-0'} flex bg-gray-950 rounded-lg shadow-xl overflow-hidden border border-gray-700 z-10 text-xs`}>
-                                <button onClick={() => {onReply(message); setShowMenu(false);}} className="p-2 text-white hover:bg-gray-700 flex items-center gap-1">Responder</button>
-                                {isMe && <button onClick={() => {onDelete(message.id); setShowMenu(false);}} className="p-2 text-red-400 hover:bg-red-900/50 flex items-center gap-1">Borrar</button>}
-                            </div>
-                        )}
+                        {ICONS.reply({ size: 16 })}
+                    </button>
 
+                    {/* Botón de Eliminar (Solo para el dueño - posición opuesta) */}
+                    {isMe && (
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
+                            className={`absolute z-20 transition-all duration-200 p-1 bg-red-600 border border-red-800 rounded-full text-white shadow-lg hover:bg-red-700 top-1/2 -translate-y-1/2 
+                                left-[-20px] 
+                                ${showMenu ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-3'}`}
+                        >
+                            <X size={16}/>
+                        </button>
+                    )}
+
+
+                    <div 
+                        className={`max-w-[80%] p-3 rounded-2xl text-sm transition-all relative ${isMe ? 'bg-white text-black' : 'bg-gray-800 text-white'} ${showMenu ? 'shadow-lg ring-2 ring-cyan-500/50' : ''}`}
+                    >
                         {/* Mensaje de respuesta (citado) */}
                         {message.replyTo && (
                             <div className="p-2 mb-2 bg-white/10 border-l-4 border-cyan-400 rounded-md text-xs text-gray-300">
@@ -211,7 +614,18 @@
                         )}
 
                         {/* Contenido del mensaje */}
-                        {message.type === 'text' && message.text}
+                        {message.type === 'text' && !message.fileUrl && <p className="whitespace-pre-wrap">{message.text}</p>}
+                        
+                        {/* Audio Generado por Texto (TTS) o Archivo de Audio Subido */}
+                        {isAudioOrTTS && (
+                            <AudioMessage 
+                                // Usamos message.fileUrl si existe (audio o TTS ya generado), sino usamos message.text para disparar la generación TTS
+                                audioUrl={message.fileUrl} 
+                                isMe={isMe} 
+                                text={message.text}
+                                onGeneration={handleAudioUrlUpdate}
+                            />
+                        )}
                         
                         {message.type === 'image' && (
                             <img 
@@ -221,33 +635,163 @@
                             />
                         )}
                         
-                        {message.type === 'audio' && (
-                            <div className="flex items-center gap-2">
-                                {fileIcon}
-                                <audio controls src={message.fileUrl} className="w-full h-8" />
-                            </div>
-                        )}
-                        
                         {message.type === 'file' && (
                             <a href={message.fileUrl} target="_blank" className="flex items-center gap-2 text-cyan-400 hover:underline">
                                 {fileIcon} Archivo Adjunto
                             </a>
                         )}
 
+                        {/* Nueva previsualización de video en chat */}
                         {message.type === 'video' && video && (
-                            <div className="relative aspect-[9/16] w-32 h-48 bg-black rounded-lg overflow-hidden">
-                                <video src={video.url + '#t=0.1'} className="w-full h-full object-cover" muted preload="metadata" />
-                                <div className="absolute inset-0 flex flex-col justify-end p-2 bg-gradient-to-t from-black/70 to-transparent">
-                                    <Play size={20} className="text-white fill-white mb-1"/>
-                                    <p className="text-xs font-bold text-white truncate">{video.description || 'Video Compartido'}</p>
-                                </div>
-                            </div>
+                            <ChatVideoPreview video={video} isMe={isMe} />
+                        )}
+
+                        {message.type === 'video' && !video && (
+                            <div className="text-gray-400 text-xs italic">Video no encontrado.</div>
                         )}
                     </div>
                 </div>
             );
         };
 
+        // --- COMPONENTE MODAL DE COMENTARIOS ---
+        const CommentsModal = ({ isOpen, onClose, video, user }) => {
+            const [comments, setComments] = useState([]);
+            const [newComment, setNewComment] = useState('');
+            const commentsEndRef = useRef(null);
+
+            useEffect(() => {
+                if (!isOpen || !video?.id) return;
+                // Escuchar los comentarios ordenados por fecha de creación ascendente
+                const q = query(
+                    collection(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'comments'), 
+                    orderBy('createdAt', 'asc')
+                );
+                const unsub = onSnapshot(q, s => {
+                    setComments(s.docs.map(d => ({id: d.id, ...d.data()}))
+                        // Aseguramos que los IDs y avatares estén presentes, añadiendo 'isVerified'
+                        .map(c => ({
+                            ...c,
+                            isVerified: c.isVerified || false,
+                            avatar: c.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${c.authorId}`
+                        }))
+                    );
+                });
+                return () => unsub();
+            }, [isOpen, video?.id]);
+
+            // Scroll al final al cargar comentarios
+            useEffect(() => {
+                if (commentsEndRef.current) {
+                    commentsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+                }
+            }, [comments.length]);
+
+            const handleSendComment = async () => {
+                if (!user?.uid || !newComment.trim()) return;
+                
+                // Obtener datos del usuario (incluyendo isVerified)
+                const userDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid));
+                const userData = userDoc.data() || {};
+
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'comments'), {
+                    authorId: user.uid,
+                    authorName: userData.displayName || user.displayName || 'Usuario',
+                    authorUsername: userData.username || user.displayName,
+                    avatar: userData.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
+                    text: newComment.trim(),
+                    createdAt: serverTimestamp(),
+                    isVerified: userData.isVerified || false // Guardar el estado de verificado
+                });
+                setNewComment('');
+                
+                // Actualizar contador de comentarios en el video principal
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), {
+                    commentsCount: increment(1)
+                });
+            };
+
+            const handleDeleteComment = async (commentId) => {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'comments', commentId));
+                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), {
+                    commentsCount: increment(-1)
+                });
+            };
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
+                    <div className="bg-gray-900 w-full rounded-t-2xl p-4 flex flex-col h-2/3 border-t border-gray-700 animate-in slide-in-from-bottom">
+                        
+                        {/* Header */}
+                        <div className="flex justify-between items-center border-b border-gray-800 pb-3 mb-3">
+                            <span className="text-white font-bold text-lg">Comentarios ({comments.length})</span>
+                            <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-800 transition"><X size={20} className="text-gray-400"/></button>
+                        </div>
+
+                        {/* Lista de Comentarios */}
+                        <div className="flex-1 overflow-y-auto space-y-4 pr-2 no-scrollbar">
+                            {comments.map((comment) => {
+                                const isAuthor = comment.authorId === user?.uid;
+                                const isVideoAuthor = comment.authorId === video.authorId;
+                                
+                                return (
+                                    <div key={comment.id} className="flex gap-3 relative group">
+                                        <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
+                                            <img src={comment.avatar} className="w-full h-full object-cover"/>
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-1">
+                                                <p className="font-bold text-sm text-gray-300 hover:text-white cursor-pointer transition">
+                                                    @{comment.authorUsername}
+                                                </p>
+                                                {comment.isVerified && <VerifiedBadge size={12} />}
+                                                {isVideoAuthor && !comment.isVerified && (
+                                                    <span className="text-xs text-cyan-400 font-medium ml-1">Autor</span>
+                                                )}
+                                            </div>
+                                            <p className="text-sm text-white whitespace-pre-wrap">{comment.text}</p>
+                                        </div>
+                                        
+                                        {/* Botón de Borrar (solo para autor del comentario o autor del video) */}
+                                        {(isAuthor || video.authorId === user?.uid) && (
+                                            <button 
+                                                onClick={() => handleDeleteComment(comment.id)} 
+                                                className="absolute right-0 top-1 p-1 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-300"
+                                            >
+                                                <X size={14}/>
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            <div ref={commentsEndRef} />
+                        </div>
+
+                        {/* Input para Comentarios */}
+                        <div className="mt-4 flex gap-2 items-end border-t border-gray-800 pt-4">
+                            <textarea
+                                value={newComment}
+                                onChange={(e) => setNewComment(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendComment(); } }}
+                                placeholder="Añadir comentario..."
+                                className="chat-input flex-1 bg-gray-800 text-white p-3 rounded-2xl outline-none resize-none max-h-20"
+                                rows={1}
+                            />
+                            <button 
+                                onClick={handleSendComment}
+                                disabled={!newComment.trim()}
+                                className="w-10 h-10 p-2 bg-white rounded-full text-black flex items-center justify-center disabled:opacity-50 hover:bg-gray-200 transition"
+                            >
+                                <Send size={18}/>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+        
         // --- PANTALLAS ---
         const AuthScreen = () => {
             const [isRegistering, setIsRegistering] = useState(false);
@@ -260,6 +804,7 @@
                 e.preventDefault();
                 setError("");
                 setLoading(true);
+                // Usamos un email interno fijo para usar el sistema de autenticación de Firebase
                 const email = `${username.toLowerCase().replace(/\s/g, '')}@liveclips.internal`;
                 try {
                 if (isRegistering) {
@@ -267,7 +812,8 @@
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uc.user.uid), {
                         displayName: username, username, photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${uc.user.uid}`,
                         bannerURL: 'https://placehold.co/600x150/1f2937/d1d5db?text=Toca+para+cambiar+el+Banner', // Banner por defecto
-                        bio: "Hola, soy nuevo aquí.", createdAt: new Date().toISOString(), stats: { followers: 0, following: 0, likes: 0 }
+                        bio: "Hola, soy nuevo aquí.", createdAt: new Date().toISOString(), stats: { followers: 0, following: 0, likes: 0 },
+                        isVerified: false // Nuevo campo: Por defecto no verificado
                     });
                     await updateProfile(uc.user, { displayName: username });
                 } else {
@@ -297,12 +843,15 @@
             );
         };
 
-        const VideoPlayer = ({ video, isActive, toggleLike, onShare, onVisitProfile }) => {
+        const VideoPlayer = ({ video, isActive, toggleLike, onShare, onVisitProfile, onOpenComments }) => {
             const videoRef = useRef(null);
             const [playing, setPlaying] = useState(false);
             const [progress, setProgress] = useState(0);
             const [buffering, setBuffering] = useState(false);
             const [hasLiked, setHasLiked] = useState(false);
+            
+            // Estado de perfil del autor (para ver si está verificado)
+            const [authorProfile, setAuthorProfile] = useState({});
 
             // Listener para verificar si ya dimos like
             useEffect(() => {
@@ -313,6 +862,16 @@
                 }) : () => {};
                 return () => unsubscribe();
             }, [video.id, auth.currentUser]);
+            
+            // Obtener perfil del autor para verificado
+            useEffect(() => {
+                if (!video.authorId) return;
+                const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', video.authorId), s => {
+                    if(s.exists()) setAuthorProfile(s.data());
+                });
+                return () => unsub();
+            }, [video.authorId]);
+
 
             useEffect(() => {
                 const videoEl = videoRef.current;
@@ -408,6 +967,14 @@
                     </div>
                     <span className="text-white text-xs font-medium drop-shadow-md">{video.likes}</span>
                     </button>
+                    
+                    {/* Botón de Comentarios (Nuevo) */}
+                    <button onClick={() => onOpenComments(video)} className="flex flex-col items-center gap-1 group">
+                        <div className={`${actionBtnClass} comments-btn-bg`}>
+                            <MessageSquare className="w-7 h-7 text-white opacity-90 drop-shadow-lg"/>
+                        </div>
+                        <span className="text-white text-xs font-medium drop-shadow-md">{video.commentsCount || 0}</span>
+                    </button>
 
                     <button onClick={() => onShare(video.id)} className="flex flex-col items-center gap-1 group">
                     <div className={actionBtnClass}>
@@ -424,7 +991,10 @@
                 </div>
 
                 <div className="absolute bottom-24 left-4 right-20 z-20 text-white pointer-events-none">
-                    <h3 className="font-bold text-lg drop-shadow-lg mb-2 text-gray-100 cursor-pointer pointer-events-auto w-fit" onClick={() => onVisitProfile(video.authorId)}>@{video.authorName}</h3>
+                    <div className="flex items-center gap-1">
+                        <h3 className="font-bold text-lg drop-shadow-lg mb-2 text-gray-100 cursor-pointer pointer-events-auto w-fit" onClick={() => onVisitProfile(video.authorId)}>@{video.authorName}</h3>
+                        {authorProfile.isVerified && <VerifiedBadge size={18} />}
+                    </div>
                     <p className="text-sm drop-shadow-md line-clamp-2 mb-4 text-gray-200 font-light leading-relaxed">{video.description}</p>
                     <div className="flex items-center gap-2 text-xs font-medium bg-white/5 border border-white/10 w-fit px-4 py-2 rounded-full backdrop-blur-md shadow-sm">
                     <Music2 size={12} />
@@ -438,16 +1008,19 @@
         const ProfileView = ({ targetUserId, currentUser, videos, onBack, onVideoClick, onLogout, onChat }) => {
             const [profile, setProfile] = useState(null);
             const [isFollowing, setIsFollowing] = useState(false);
+            
+            // Usamos una variable de estado para controlar la edición en el modal.
             const [isEditing, setIsEditing] = useState(false);
             
-            const isMyProfile = targetUserId === currentUser.uid;
+            const isMyProfile = targetUserId === currentUser?.uid; // Se usa optional chaining
             const userVideos = videos.filter(v => v.authorId === targetUserId);
 
             useEffect(() => {
+                if (!targetUserId) return;
                 const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId), (s) => {
                 if (s.exists()) setProfile(s.data());
                 });
-                if (!isMyProfile) {
+                if (!isMyProfile && currentUser) {
                     const checkFollow = onSnapshot(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'following', targetUserId), (s) => {
                         setIsFollowing(s.exists());
                     });
@@ -457,10 +1030,12 @@
             }, [targetUserId, currentUser]);
 
             const handleFollow = async () => {
-                if (!currentUser) return; // Seguridad extra
-                const myRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'following', targetUserId);
+                if (!currentUser?.uid) return; // FIX: Asegurar que el UID existe antes de continuar
+                
+                const currentUid = currentUser.uid; // Usar el UID para operaciones
+                const myRef = doc(db, 'artifacts', appId, 'users', currentUid, 'following', targetUserId);
                 const targetPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId);
-                const myPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.uid);
+                const myPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUid);
 
                 if (isFollowing) {
                     await deleteDoc(myRef);
@@ -470,10 +1045,11 @@
                     await setDoc(myRef, { since: new Date().toISOString() });
                     await updateDoc(targetPublicRef, { "stats.followers": increment(1) });
                     await updateDoc(myPublicRef, { "stats.following": increment(1) });
-                    // Notificación al seguir
+                    
+                    // FIX: Usar currentUid para obtener los datos del remitente
+                    const uData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUid))).data(); 
                     await addDoc(collection(db, 'artifacts', appId, 'users', targetUserId, 'notifications'), {
-                        type: 'follow', fromUser: currentUser.uid, fromName: currentUser.displayName || "Usuario",
-                        avatar: currentUser.photoURL || "", createdAt: new Date().toISOString()
+                        type: 'follow', fromUser: currentUid, fromName: uData.displayName, avatar: uData.photoURL, createdAt: new Date().toISOString()
                     });
                 }
             };
@@ -481,22 +1057,27 @@
             return (
                 <div className="w-full h-full bg-gray-900 overflow-y-auto pb-24 animate-in slide-in-from-right">
                 
-                {/* Banner */}
+                {/* Botón de regreso y Banner */}
                 <div className="relative w-full h-40 bg-gray-950 border-b border-gray-800 shadow-md" style={{backgroundImage: `url(${profile?.bannerURL})`, backgroundSize: 'cover', backgroundPosition: 'center'}}>
                     <div className="absolute inset-0 bg-black/30"></div>
-                    {!isMyProfile && (
-                        <div className="absolute top-0 left-0 w-full p-4 pt-8 flex items-center gap-4 z-10">
-                            <button onClick={onBack}><ArrowLeft className="text-white"/></button>
-                            <span className="font-bold text-white">{profile?.displayName}</span>
-                        </div>
-                    )}
+                    
+                    {/* Botón de regreso */}
+                    <div className="absolute top-0 left-0 w-full p-4 pt-8 flex items-center gap-4 z-10">
+                        <button onClick={onBack} className="p-2 bg-gray-800/50 rounded-full hover:bg-gray-700/70 transition">
+                            <ArrowLeft className="text-white"/>
+                        </button>
+                    </div>
+
                 </div>
 
                 <div className="flex flex-col items-center justify-center mb-6 px-4 -mt-16 relative z-10">
                     <div className="w-24 h-24 rounded-full border-4 border-gray-900 p-1 mb-3 bg-gray-900 shadow-xl">
                         <img src={profile?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${targetUserId}`} className="w-full h-full rounded-full bg-gray-800 object-cover" />
                     </div>
-                    <h2 className="text-lg font-bold text-white">@{profile?.username || "Usuario"}</h2>
+                    <div className="flex items-center gap-1">
+                        <h2 className="text-lg font-bold text-white">@{profile?.username || "Usuario"}</h2>
+                        {profile?.isVerified && <VerifiedBadge size={18} />}
+                    </div>
                     <p className="text-sm text-gray-400 text-center mt-1">{profile?.bio || "Sin biografía"}</p>
                     
                     <div className="flex items-center gap-8 mt-6 text-center">
@@ -506,7 +1087,7 @@
                     </div>
                     
                     <div className="flex gap-2 mt-6 w-full max-w-xs px-4">
-                        {isMyProfile ? (
+                        {currentUser && (isMyProfile ? (
                             <>
                                 <button onClick={() => setIsEditing(true)} className="flex-1 py-2 bg-gray-800 text-white text-sm font-bold rounded-lg border border-gray-600">Editar Perfil</button>
                                 <button onClick={onLogout} className="w-10 flex items-center justify-center bg-gray-800 text-white rounded-lg border border-gray-600"><LogOut size={16}/></button>
@@ -524,7 +1105,7 @@
                                     <MessageCircle size={18}/>
                                 </button>
                             </>
-                        )}
+                        ))}
                     </div>
                 </div>
 
@@ -559,24 +1140,28 @@
             }, [profile]);
             
             const handleImageUpload = async (event, type) => {
+                if (!user?.uid) return;
                 const file = event.target.files[0];
                 if (!file) return;
 
                 setLoading(true);
                 try {
                     const path = `${type}s/${user.uid}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
-                    const url = await uploadToGitHub(file, path, (s) => alert(s)); 
+                    const url = await uploadToGitHub(file, path, (s) => console.log(s)); // Cambiado a console.log
                     
                     const updateData = type === 'photo' ? { photoURL: url } : { bannerURL: url };
                     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), updateData);
                 } catch(e) {
-                    alert("Error al subir imagen: " + e.message);
+                    // Reemplazado alert con console.error para evitar problemas en iFrame
+                    console.error("Error al subir imagen:", e.message);
                 }
                 setLoading(false);
             };
 
             const handleSaveText = async () => {
+                if (!user?.uid) return;
                 setLoading(true);
+                // No permitimos que el usuario edite 'isVerified' desde el frontend por seguridad.
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), { displayName, bio });
                 setLoading(false); onClose();
             };
@@ -627,11 +1212,11 @@
 
             const handleFile = (e) => { const f = e.target.files[0]; if(f) { setFile(f); setPreview(URL.createObjectURL(f)); }};
             const handleUpload = async () => {
-                if(!file) return;
+                if(!user?.uid || !file) return;
                 setLoading(true);
                 try {
                     const path = `videos/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
-                    const url = await uploadToGitHub(file, path, setStatus);
+                    const url = await uploadToGitHub(file, path, (s) => console.log(s)); // Cambiado a console.log
                     const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
                     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), {
                         url, authorId: user.uid, authorName: userData.displayName, authorAvatar: userData.photoURL,
@@ -653,7 +1238,7 @@
                     <div className="flex-1 p-6 flex flex-col items-center justify-center">
                         {!preview ? (
                             <label className="w-full h-64 border-2 border-dashed border-gray-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-gray-400 bg-gray-800/30">
-                                <div className="p-4 rounded-full bg-gray-700 mb-3"><img src={ICONS.crear} className="w-8 h-8 invert opacity-70"/></div>
+                                <div className="p-4 rounded-full bg-gray-700 mb-3"><img src={ICONS.crear} className="w-6 h-6 invert opacity-70"/></div>
                                 <span className="text-gray-400 font-medium">Seleccionar video</span>
                                 <input type="file" accept="video/*" className="hidden" onChange={handleFile}/>
                             </label>
@@ -685,7 +1270,7 @@
                         limit(10)
                     );
                     const unsub = onSnapshot(q, (snap) => {
-                        setUsers(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(u => u.id !== auth.currentUser.uid));
+                        setUsers(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(u => u.id !== auth.currentUser?.uid));
                     });
                     return () => unsub();
                 } else if (tab === 'users') {
@@ -737,7 +1322,10 @@
                                         <img src={u.photoURL} className="w-full h-full object-cover"/>
                                     </div>
                                     <div className="flex-1">
-                                        <p className="font-bold text-white">@{u.username}</p>
+                                        <div className="flex items-center gap-1">
+                                            <p className="font-bold text-white">@{u.username}</p>
+                                            {u.isVerified && <VerifiedBadge size={16} />}
+                                        </div>
                                         <p className="text-xs text-gray-400 truncate">{u.displayName}</p>
                                     </div>
                                     <button onClick={(e) => {e.stopPropagation(); onVisitProfile(u.id);}} className="text-cyan-400 p-2 rounded-full hover:bg-gray-700 transition">
@@ -752,14 +1340,23 @@
             );
         };
 
-        const InboxView = ({ user, onOpenChat, notifications, chats }) => {
+        const InboxView = ({ user, onOpenChat, notifications, chats, onlineStatus }) => {
             const [tab, setTab] = useState('chats'); 
+            // Crear un mapa de datos de todos los usuarios de chats para facilitar la búsqueda
+            const allUsers = chats.reduce((acc, chat) => {
+                const otherUid = chat.participants.find(uid => uid !== user.uid);
+                if (otherUid && chat.participantsData?.[otherUid]) {
+                    acc[otherUid] = { uid: otherUid, ...chat.participantsData[otherUid] };
+                }
+                return acc;
+            }, {});
 
             const myChats = chats.filter(c => c.status === 'accepted');
             // La solicitud es para mí si mi ID NO es el que creó la solicitud (que está en participants) y el status es pending.
-            const requests = chats.filter(c => c.status === 'pending' && c.participants.includes(user.uid));
+            const requests = chats.filter(c => c.status === 'pending' && c.participants.includes(user?.uid));
 
             const handleAccept = async (chatId, targetUid) => {
+                if (!user?.uid) return;
                 await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted', targetId: null });
                 
                 const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
@@ -780,27 +1377,37 @@
                         myChats.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes mensajes</div> :
                         myChats.map(chat => {
                             const otherUid = chat.participants.find(uid => uid !== user.uid);
-                            const otherName = chat.participantsData?.[otherUid]?.displayName || "Usuario";
-                            const otherImg = chat.participantsData?.[otherUid]?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`; 
+                            const otherUser = allUsers[otherUid];
+                            const otherName = otherUser?.displayName || "Usuario";
+                            const otherImg = otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`; 
                             
                             // Verificar racha
                             const isStreakActive = chat.streak && chat.streak.count > 0 && 
                                 (new Date().getTime() - new Date(chat.streak.lastMessageTime).getTime() < 86400000);
 
+                            // Verificar estado online
+                            const isOnline = onlineStatus[otherUid]?.online || false;
+
                             return (
-                                <div key={chat.id} onClick={() => onOpenChat(chat.id)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800">
+                                <div key={chat.id} onClick={() => onOpenChat(chat.id, otherUser)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800">
                                     <div className="w-12 h-12 rounded-full bg-gray-700 overflow-hidden border border-gray-600 flex-shrink-0 relative">
                                         <img src={otherImg} className="w-full h-full object-cover"/>
-                                        {isStreakActive && (
-                                            <div className="absolute -bottom-1 -right-1 bg-yellow-500 rounded-full w-5 h-5 flex items-center justify-center text-[10px] font-bold shadow-lg">
-                                                🔥
-                                            </div>
+                                        
+                                        {/* Indicador Online (Real) */}
+                                        {isOnline && (
+                                            <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-gray-900"></div>
                                         )}
                                     </div>
                                     <div className="flex-1">
                                         <p className="font-bold text-white flex items-center gap-2">
                                             {otherName} 
-                                            {isStreakActive && <span className="text-yellow-400 text-xs">x{chat.streak.count}</span>}
+                                            {/* Racha con GIF al lado del nombre */}
+                                            {isStreakActive && (
+                                                <div className="flex items-center gap-0.5">
+                                                    <img src={STREAK_GIF_URL} alt="Racha" className="w-5 h-5"/>
+                                                    <span className="text-yellow-400 text-xs font-extrabold">x{chat.streak.count}</span>
+                                                </div>
+                                            )}
                                         </p>
                                         <p className="text-xs text-gray-400">Toca para chatear</p>
                                     </div>
@@ -828,7 +1435,7 @@
             );
         };
 
-        const ChatScreen = ({ chatId, user, onClose, videos }) => {
+        const ChatScreen = ({ chatId, user, onClose, videos, chatData, otherUser }) => {
             const [messages, setMessages] = useState([]);
             const [txt, setTxt] = useState("");
             const [file, setFile] = useState(null);
@@ -847,7 +1454,8 @@
                 // Orden descendente para que el CSS column-reverse funcione
                 const q = query(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), orderBy('createdAt', 'desc')); 
                 const unsub = onSnapshot(q, s => {
-                    setMessages(s.docs.map(d => ({id: d.id, ...d.data()})));
+                    setMessages(s.docs.map(d => ({id: d.id, ...d.data(), chatId})) // Añadir chatId al mensaje para la actualización de audio
+                );
                 });
                 return () => unsub();
             }, [chatId]);
@@ -855,7 +1463,7 @@
             // Scroll al final al cargar mensajes (siempre después de que se cargan)
             useEffect(() => {
                 if (endRef.current) {
-                    endRef.current.scrollIntoView({ behavior: 'auto' });
+                    endRef.current.scrollIntoView({ behavior: 'smooth' }); // Scroll más suave
                 }
             }, [messages.length, chatId]); 
             
@@ -865,7 +1473,7 @@
                 const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
                 return onSnapshot(chatRef, (snap) => {
                     const typingUser = snap.data().typing;
-                    if (typingUser && typingUser !== user.uid) {
+                    if (typingUser && typingUser !== user?.uid) {
                         setIsTyping(true);
                     } else {
                         setIsTyping(false);
@@ -876,13 +1484,17 @@
             // Función para actualizar el estado de "escribiendo" en Firebase
             const setTypingStatus = (status) => {
                 const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
-                updateDoc(chatRef, { typing: status ? user.uid : null }).catch(console.error);
+                updateDoc(chatRef, { typing: status ? user?.uid : null }).catch(console.error);
             };
 
             // Manejar la escritura del usuario
             const handleTextChange = (e) => {
                 setTxt(e.target.value);
                 
+                // Redimensionar el textarea
+                e.target.style.height = 'auto';
+                e.target.style.height = e.target.scrollHeight + 'px';
+
                 if (e.target.value.length > 0) {
                     if (!typingTimerRef.current) {
                         setTypingStatus(true);
@@ -908,6 +1520,7 @@
             }, [chatId]);
             
             const updateStreak = async () => {
+                if (!user?.uid) return;
                 const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
                 const snap = await getDoc(chatRef);
                 if (!snap.exists()) return;
@@ -942,15 +1555,24 @@
                     }
                 });
             };
+            
+            const updateMessageAudioUrl = async (messageId, newUrl) => {
+                const messageRef = doc(db, 'artifacts', appId, 'chats', chatId, 'messages', messageId);
+                await updateDoc(messageRef, { fileUrl: newUrl, type: 'audio_tts' });
+            };
+
 
             const sendMessage = async (type, content, fileDetails = null) => {
+                if (!user?.uid) return; // FIX: Asegurar que el UID existe antes de enviar
+                
                 const message = {
                     type,
                     senderId: user.uid,
                     createdAt: new Date().toISOString(),
-                    ...(type === 'text' ? { text: content } : { fileUrl: content, fileType: fileDetails?.fileType || 'file' }),
+                    ...(type === 'text' || type === 'audio_tts' ? { text: content } : { fileUrl: content, fileType: fileDetails?.fileType || 'file' }),
                     ...(type === 'video' ? { videoId: content } : {}),
                     ...(replyTo ? { replyTo: { text: replyTo.text, type: replyTo.type, senderId: replyTo.senderId } } : {}),
+                    ...(type === 'audio_tts' ? { fileUrl: fileDetails?.fileUrl } : {}) // Para el TTS, si la URL ya se generó
                 };
 
                 await addDoc(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), message);
@@ -966,16 +1588,23 @@
                     await addDoc(collection(db, 'artifacts', appId, 'users', receiverId, 'notifications'), {
                         type: 'message', 
                         fromUser: user.uid, 
-                        fromName: userData.displayName || "Usuario", 
-                        avatar: userData.photoURL || "", 
+                        fromName: userData.displayName, 
+                        avatar: userData.photoURL, 
                         createdAt: new Date().toISOString()
                     });
                 }
             };
 
-            const sendText = () => {
+            const sendTextOrAudio = () => {
                 if(!txt.trim()) return;
-                sendMessage('text', txt.trim());
+
+                // Si el mensaje es largo, lo enviamos como texto simple que el componente de burbuja interpretará como TTS a generar
+                if (txt.trim().length > 100) {
+                    sendMessage('text', txt.trim());
+                } else {
+                    sendMessage('text', txt.trim());
+                }
+                
                 setTxt("");
                 setReplyTo(null);
             };
@@ -984,26 +1613,26 @@
                 const selectedFile = e.target.files[0];
                 if (selectedFile) {
                     setFile(selectedFile);
-                    setTxt(selectedFile.name); 
+                    // No mostramos el nombre del archivo en el input para evitar el "Subiendo..."
                 }
             };
 
             const sendFile = async (selectedFile = file) => {
-                if (!selectedFile) return;
-
+                if (!user?.uid || !selectedFile) return; // FIX: Asegurar que el UID existe
+                
                 const fileExtension = selectedFile.name.split('.').pop().toLowerCase();
                 let fileType = 'file'; 
                 if (['png', 'jpg', 'jpeg', 'gif'].includes(fileExtension)) fileType = 'image';
                 else if (['mp3', 'wav', 'ogg', 'webm'].includes(fileExtension)) fileType = 'audio';
                 
-                setTxt(`Subiendo ${fileType}...`);
+                // Eliminado setTxt para evitar el mensaje de subida
                 const path = `chats/${chatId}/${Date.now()}_${selectedFile.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
                 
                 try {
-                    const url = await uploadToGitHub(selectedFile, path, (s) => setTxt(s));
+                    const url = await uploadToGitHub(selectedFile, path, (s) => console.log(s));
                     sendMessage(fileType, url, { fileType });
                 } catch(e) {
-                    alert("Error al subir archivo: " + e.message);
+                    console.error("Error al subir archivo:", e.message);
                 } finally {
                     setFile(null);
                     setTxt("");
@@ -1013,7 +1642,7 @@
             
             // --- LÓGICA DE GRABACIÓN DE AUDIO REAL ---
             const startRecording = async () => {
-                if (isRecording) return;
+                if (isRecording || !user?.uid) return;
                 
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1027,7 +1656,7 @@
                     };
                     
                     recorder.onstop = async () => {
-                        setTxt("Procesando audio...");
+                        // Eliminado setTxt("Procesando audio...")
                         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
                         const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: 'audio/webm' });
                         await sendFile(audioFile); 
@@ -1036,10 +1665,10 @@
 
                     recorder.start();
                     setIsRecording(true);
-                    setTxt("Grabando...");
+                    // Eliminado setTxt("Grabando...")
                     
                 } catch (err) {
-                    alert('Error al acceder al micrófono: ' + err.message);
+                    console.error('Error al acceder al micrófono:', err.message);
                     setIsRecording(false);
                 }
             };
@@ -1053,26 +1682,45 @@
 
 
             const deleteMsg = async (msgId) => {
-                if (window.confirm("¿Seguro que quieres borrar este mensaje?")) {
-                    await deleteDoc(doc(db, 'artifacts', appId, 'chats', chatId, 'messages', msgId));
-                }
+                // Función de eliminación discreta
+                await deleteDoc(doc(db, 'artifacts', appId, 'chats', chatId, 'messages', msgId));
             };
             
             const handleKeyDown = (e) => {
-                if (e.key === 'Enter') {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault(); // Previene el salto de línea por defecto
                     if (file) {
                         sendFile();
                     } else {
-                        sendText();
+                        sendTextOrAudio();
                     }
                 }
             };
+            
+            // Función para enviar texto como audio TTS (Botón dedicado)
+            const sendAsTTS = () => {
+                if (!txt.trim()) return;
+                // Envía como tipo especial 'audio_tts' para que el componente de burbuja lo genere
+                sendMessage('text', txt.trim());
+                setTxt("");
+                setReplyTo(null);
+            };
+
+            const isSendButtonVisible = txt.trim().length > 0 || !!file || isRecording;
 
             return (
                 <div className="absolute inset-0 z-50 bg-gray-900 flex flex-col animate-in slide-in-from-right h-[100dvh]">
-                    <div className="p-4 bg-gray-900 border-b border-gray-800 flex items-center gap-4">
-                        <button onClick={onClose}><ArrowLeft className="text-white"/></button>
-                        <span className="font-bold text-white">Chat</span>
+                    {/* ENCABEZADO DEL CHAT (MODIFICADO) */}
+                    <div className="p-4 bg-gray-900 border-b border-gray-800 flex items-center gap-3">
+                        <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-800 transition"><ArrowLeft className="text-white"/></button>
+                        
+                        <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
+                                <img src={otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUser?.uid}`} className="w-full h-full object-cover"/>
+                            </div>
+                            <span className="font-bold text-white text-lg">{otherUser?.displayName || "Chat Privado"}</span>
+                            {otherUser?.isVerified && <VerifiedBadge size={16} />}
+                        </div>
                     </div>
                     
                     <div className="message-list-container">
@@ -1083,10 +1731,11 @@
                                 <MessageBubble 
                                     key={m.id} 
                                     message={m} 
-                                    isMe={m.senderId === user.uid} 
+                                    isMe={m.senderId === user?.uid} 
                                     onDelete={deleteMsg}
                                     onReply={setReplyTo}
                                     videos={videos}
+                                    onUpdateAudioUrl={updateMessageAudioUrl}
                                 />
                             ))}
                         </div>
@@ -1117,53 +1766,76 @@
                             </div>
                         )}
 
-                        <div className="flex gap-2 items-center">
+                        <div className="flex gap-2 items-end"> {/* items-end para alinear con el textarea */}
                             
                             {/* Botón para Adjuntar */}
-                            <label className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition">
+                            <label className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0">
                                 <FileText size={18}/>
                                 <input type="file" className="hidden" onChange={handleFileSelect} />
                             </label>
 
-                            {/* Campo de Texto */}
-                            <input 
-                                value={txt} 
+                            {/* Campo de Texto (Textarea para texto largo) */}
+                            <textarea
+                                value={file ? file.name : txt} // Muestra el nombre del archivo o el texto
                                 onChange={handleTextChange} 
-                                className="flex-1 bg-gray-800 text-white p-3 rounded-full outline-none" 
-                                placeholder={isRecording ? "Grabando audio..." : (file ? file.name : "Mensaje...")}
+                                className="chat-input flex-1 bg-gray-800 text-white p-3 rounded-2xl outline-none resize-none max-h-40" 
+                                placeholder={isRecording ? "Grabando audio..." : (file ? `Archivo: ${file.name}` : "Mensaje...")}
                                 onKeyDown={handleKeyDown}
-                                disabled={file || isRecording}
+                                disabled={isRecording}
+                                rows={1} // Fila inicial mínima
                             />
                             
-                            {/* Botón de Enviar o Audio */}
-                            {txt.trim() || file ? (
-                                <button onClick={file ? sendFile : sendText} className="p-3 bg-white rounded-full text-black"><Send size={18}/></button>
-                            ) : (
-                                <button 
-                                    onMouseDown={startRecording}
-                                    onMouseUp={stopRecording}
-                                    onTouchStart={startRecording}
-                                    onTouchEnd={stopRecording}
-                                    className={`p-3 rounded-full transition-all ${isRecording ? 'bg-red-500 scale-110 text-white' : 'bg-gray-800 text-white hover:bg-gray-700'}`}
-                                >
-                                    <Mic size={18}/>
-                                </button>
-                            )}
+                            {/* Botón de Enviar (Texto/Archivo) o Audio (TTS/Mic) */}
+                            <div className="flex flex-col gap-2 items-center flex-shrink-0">
+                                
+                                {isSendButtonVisible ? (
+                                    <>
+                                        {/* Botón de TTS (Solo si hay texto y es largo) */}
+                                        {txt.trim() && txt.trim().length > 100 && !file && (
+                                            <button 
+                                                onClick={sendAsTTS} 
+                                                className="w-10 h-10 bg-cyan-600 rounded-full text-white hover:bg-cyan-500 transition shadow-lg flex items-center justify-center"
+                                                title="Enviar como Audio (TTS)"
+                                            >
+                                                <Mic size={18}/>
+                                            </button>
+                                        )}
+                                        
+                                        {/* Botón principal de Enviar (Archivo o Texto) */}
+                                        <button onClick={file ? sendFile : sendTextOrAudio} 
+                                            className="w-10 h-10 p-2 bg-white rounded-full text-black flex items-center justify-center hover:bg-gray-200 transition shadow-lg">
+                                            <Send size={18}/>
+                                        </button>
+                                    </>
+                                ) : (
+                                    // Botón de Audio (Micrófono) si no hay nada escrito ni archivo
+                                    <button 
+                                        onMouseDown={startRecording}
+                                        onMouseUp={stopRecording}
+                                        onTouchStart={startRecording}
+                                        onTouchEnd={stopRecording}
+                                        className={`w-10 h-10 p-2 rounded-full transition-all flex items-center justify-center shadow-lg
+                                            ${isRecording ? 'bg-red-500 scale-110 text-white' : 'bg-gray-800 text-white hover:bg-gray-700'}`}
+                                    >
+                                        <Mic size={18}/>
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
             );
         };
 
-        const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => {
+        const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => { // FIX: Agregado videoId
             const [selectedChat, setSelectedChat] = useState(null);
 
             const handleSend = async () => {
-                if (!selectedChat) return;
+                if (!user?.uid || !selectedChat || !videoId) return; // FIX: Verificado videoId
                 
                 const message = {
                     type: 'video',
-                    videoId: videoId,
+                    videoId: videoId, // FIX: Usado la prop videoId
                     senderId: user.uid,
                     createdAt: new Date().toISOString(),
                 };
@@ -1171,9 +1843,33 @@
                 await addDoc(collection(db, 'artifacts', appId, 'chats', selectedChat, 'messages'), message);
 
                 // Lógica de racha
-                await updateDoc(doc(db, 'artifacts', appId, 'chats', selectedChat), {
+                const chatRef = doc(db, 'artifacts', appId, 'chats', selectedChat);
+                const chatSnap = await getDoc(chatRef);
+                const chatData = chatSnap.data();
+                
+                const now = new Date().getTime();
+                const lastTime = chatData.streak ? new Date(chatData.streak.lastMessageTime).getTime() : 0;
+                const lastSender = chatData.streak ? chatData.streak.lastSenderId : null;
+                const currentCount = chatData.streak ? chatData.streak.count : 0;
+                
+                const isWithin24Hours = (now - lastTime) < 86400000;
+                const streakLost = (now - lastTime) >= 86400000;
+
+                let newCount = currentCount;
+
+                if (currentCount === 0) {
+                    newCount = 1; 
+                } else if (isWithin24Hours && lastSender !== user.uid) {
+                    newCount = currentCount + 1; 
+                } else if (streakLost) {
+                    newCount = 1; 
+                } else if (lastSender === user.uid) {
+                    newCount = currentCount; 
+                }
+
+                await updateDoc(chatRef, {
                     streak: {
-                        count: increment(1),
+                        count: newCount,
                         lastMessageTime: new Date().toISOString(),
                         lastSenderId: user.uid
                     }
@@ -1195,7 +1891,8 @@
                         <div className="max-h-64 overflow-y-auto space-y-3 mb-6">
                             {chats.filter(c => c.status === 'accepted').map(chat => {
                                 const otherUid = chat.participants.find(uid => uid !== user.uid);
-                                const otherName = chat.participantsData?.[otherUid]?.displayName || "Usuario";
+                                const otherUser = chat.participantsData?.[otherUid];
+                                const otherName = otherUser?.displayName || "Usuario";
                                 const isSelected = selectedChat === chat.id;
 
                                 return (
@@ -1204,7 +1901,10 @@
                                         onClick={() => setSelectedChat(chat.id)}
                                         className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${isSelected ? 'bg-cyan-600 border-cyan-400' : 'bg-gray-800/40 border-gray-700 hover:bg-gray-800'}`}
                                     >
-                                        <div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden border border-gray-600 flex items-center justify-center text-white text-sm font-bold uppercase">{otherName[0]}</div>
+                                        {/* Foto de Perfil */}
+                                        <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0">
+                                            <img src={otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`} className="w-full h-full object-cover"/>
+                                        </div>
                                         <span className="font-medium text-white">{otherName}</span>
                                     </div>
                                 );
@@ -1235,35 +1935,69 @@
             const [showShare, setShowShare] = useState(null); 
             const [viewingProfile, setViewingProfile] = useState(null);
             const [activeChatId, setActiveChatId] = useState(null);
+            const [chatOtherUser, setChatOtherUser] = useState(null); // Nuevo estado para el otro usuario en el chat
+            const [onlineStatus, setOnlineStatus] = useState({}); // NUEVO: Estado de presencia
+            const [commentsVideo, setCommentsVideo] = useState(null); // NUEVO: Estado para el modal de comentarios
             const [feedMode, setFeedMode] = useState('global');
             const [profileFeedVideos, setProfileFeedVideos] = useState([]);
             const [notifications, setNotifications] = useState([]);
             const [latestToast, setLatestToast] = useState(null);
             
             const feedRef = useRef(null);
+            
+            // Función para configurar la presencia
+            const setupPresence = (uid) => {
+                const isOnlineRef = doc(db, 'artifacts', appId, 'public', 'data', 'status', uid);
+                
+                // 1. Establecer que estás online ahora
+                const setOnline = async () => {
+                    await setDoc(isOnlineRef, { online: true, last_seen: serverTimestamp() });
+                };
+                
+                // 2. Intentar establecer el estado offline cuando la app se cierra (no garantizado)
+                const setOffline = async () => {
+                    await setDoc(isOnlineRef, { online: false, last_seen: serverTimestamp() }, { merge: true });
+                };
 
-            // 1. Listener de Autenticación (Define si el Auth está listo)
+                setOnline();
+                
+                window.addEventListener('beforeunload', setOffline);
+                
+                return () => {
+                    window.removeEventListener('beforeunload', setOffline);
+                    // No podemos usar onDisconnect en web estática de Firestore, confiamos en beforeunload/inactividad.
+                };
+            };
+
+            // 1. Inicialización de Firebase y Manejo de Autenticación (CRÍTICO)
             useEffect(() => {
-                const unsub = onAuthStateChanged(auth, (currentUser) => {
+                const unsubAuth = onAuthStateChanged(auth, (currentUser) => {
                     setUser(currentUser);
-                    setIsAuthReady(true); // Una vez que se resuelve, Auth está listo.
+                    setIsAuthReady(true);
+                    if (currentUser && !currentUser.isAnonymous) {
+                        setupPresence(currentUser.uid); // Configurar presencia al iniciar sesión
+                    }
                 });
-                return () => unsub();
-            }, []);
+
+                return () => unsubAuth();
+            }, []); // Se ejecuta solo una vez al montar
 
             // 2. Listeners de Datos (Solo se ejecutan si Auth está listo Y hay usuario)
             useEffect(() => {
-                if(!user || !isAuthReady) return;
+                // Si no hay un usuario registrado (autenticado por el formulario) o el Auth no está listo, salimos.
+                if(!user || !isAuthReady) return; 
+                
+                const unsubscribers = [];
                 
                 // Videos
-                const unsubVideos = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), orderBy('createdAt', 'desc')), s => setVideos(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                unsubscribers.push(onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), orderBy('createdAt', 'desc')), s => setVideos(s.docs.map(d => ({id: d.id, ...d.data()})))));
                 
                 // Chats
-                const unsubChats = onSnapshot(query(collection(db, 'artifacts', appId, 'chats'), where('participants', 'array-contains', user.uid)), s => setChats(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                unsubscribers.push(onSnapshot(query(collection(db, 'artifacts', appId, 'chats'), where('participants', 'array-contains', user.uid)), s => setChats(s.docs.map(d => ({id: d.id, ...d.data()})))));
                 
                 // Notificaciones
                 const qNotifs = query(collection(db, 'artifacts', appId, 'users', user.uid, 'notifications'), orderBy('createdAt', 'desc'), limit(10));
-                const unsubNotifs = onSnapshot(qNotifs, (snapshot) => {
+                unsubscribers.push(onSnapshot(qNotifs, (snapshot) => {
                     const notifs = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
                     if (notifs.length > 0) {
                         const newest = notifs[0];
@@ -1274,10 +2008,19 @@
                         }
                     }
                     setNotifications(notifs);
-                });
+                }));
+
+                // Listener de Presencia Global
+                unsubscribers.push(onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'status'), (snapshot) => {
+                    const statusMap = {};
+                    snapshot.docs.forEach(doc => {
+                        statusMap[doc.id] = doc.data();
+                    });
+                    setOnlineStatus(statusMap);
+                }));
                 
-                return () => { unsubVideos(); unsubChats(); unsubNotifs(); };
-            }, [user, isAuthReady]); // Dependencia clave: isAuthReady
+                return () => unsubscribers.forEach(unsub => unsub());
+            }, [user, isAuthReady]); // Dependencia clave: isAuthReady y user.
 
             const handleScroll = () => {
                 if (feedRef.current && activeTab === 'home') {
@@ -1298,10 +2041,11 @@
                     await setDoc(likeRef, { userId: likerId, createdAt: new Date().toISOString() });
                     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), { likes: increment(1) });
                     
-                    if(video.authorId !== user.uid) {
-                        const uData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
+                    if(video.authorId !== likerId) { // Asegúrate de no notificarte a ti mismo
+                        // FIX: Usar likerId (currentUser.uid) para obtener los datos del remitente
+                        const uData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', likerId))).data();
                         await addDoc(collection(db, 'artifacts', appId, 'users', video.authorId, 'notifications'), {
-                            type: 'like', fromUser: user.uid, fromName: uData.displayName, avatar: uData.photoURL, thumbnail: video.url, createdAt: new Date().toISOString()
+                            type: 'like', fromUser: likerId, fromName: uData.displayName, avatar: uData.photoURL, thumbnail: video.url, createdAt: new Date().toISOString()
                         });
                     }
                 }
@@ -1333,9 +2077,22 @@
                 setActiveTab('home');
                 setViewingProfile(null);
             };
+            
+            const openChat = (chatId, otherUser) => {
+                setActiveChatId(chatId);
+                setChatOtherUser(otherUser);
+            }
+            
+            const openComments = (video) => {
+                setCommentsVideo(video);
+            };
+            
+            const closeComments = () => {
+                setCommentsVideo(null);
+            };
 
             const startChat = async (targetUid, targetProfile) => {
-                if (!user) return; // Seguridad extra
+                if (!user?.uid) return; // FIX: Asegurar que el UID existe
                 
                 const chatId = getChatId(user.uid, targetUid);
                 const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
@@ -1343,9 +2100,11 @@
 
                 if (chatSnap.exists()) {
                     if (chatSnap.data().status === 'accepted') {
-                        setActiveChatId(chatId); 
+                        // Abrir chat existente
+                        openChat(chatId, { uid: targetUid, ...targetProfile });
                     } else {
-                        alert("Solicitud pendiente...");
+                        // Reemplazado alert con console.log para evitar problemas en iFrame
+                        console.log("Solicitud pendiente...");
                     }
                 } else {
                     await setDoc(chatRef, {
@@ -1357,7 +2116,8 @@
                         status: 'pending',
                         createdAt: new Date().toISOString()
                     });
-                    alert("Solicitud enviada");
+                    // Reemplazado alert con console.log para evitar problemas en iFrame
+                    console.log("Solicitud enviada");
                 }
             };
 
@@ -1373,6 +2133,7 @@
                 );
             }
 
+            // Si no hay usuario autenticado (ni anónimo ni registrado), mostramos la pantalla de AuthScreen.
             if(!user) return <AuthScreen />;
 
             return (
@@ -1402,6 +2163,7 @@
                                 toggleLike={toggleLike} 
                                 onShare={(id) => setShowShare(id)} 
                                 onVisitProfile={goToProfile}
+                                onOpenComments={openComments} // Nuevo prop
                             />
                         )) : <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-white/50"/></div>}
                     </div>
@@ -1424,7 +2186,7 @@
                     )}
 
                     {activeTab === 'inbox' && (
-                        <InboxView user={user} onOpenChat={setActiveChatId} notifications={notifications} chats={chats} />
+                        <InboxView user={user} onOpenChat={openChat} notifications={notifications} chats={chats} onlineStatus={onlineStatus} />
                     )}
 
                     <div className="bg-gray-900/95 border-t border-gray-500 p-2 flex justify-around items-center z-40 pb-5 backdrop-blur-xl h-[80px]">
@@ -1456,8 +2218,9 @@
 
                     <UploadModal isOpen={showUpload} onClose={() => setShowUpload(false)} user={user} />
                     <ShareVideoModal isOpen={!!showShare} onClose={() => setShowShare(null)} videoId={showShare} user={user} chats={chats} />
+                    <CommentsModal isOpen={!!commentsVideo} onClose={closeComments} video={commentsVideo} user={user} />
                     
-                    {activeChatId && <ChatScreen chatId={activeChatId} user={user} onClose={() => setActiveChatId(null)} videos={videos} />}
+                    {activeChatId && <ChatScreen chatId={activeChatId} user={user} onClose={() => setActiveChatId(null)} videos={videos} otherUser={chatOtherUser} />}
                     
                 </div>
                 </div>
