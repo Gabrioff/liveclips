@@ -236,8 +236,6 @@
                     <span className="text-white text-xs font-medium drop-shadow-md">{video.likes}</span>
                     </button>
 
-                    {/* Sin comentarios botón */}
-
                     <button onClick={() => onShare(video.url)} className="flex flex-col items-center gap-1 group">
                     <div className={actionBtnClass}>
                         <img src={ICONS.compartir} className="w-7 h-7 invert opacity-90 drop-shadow-lg" />
@@ -617,8 +615,6 @@
             };
 
             const openProfileVideo = (video) => {
-                // Si viene de tendencias, video es el objeto. Si es de perfil, es posible que necesitemos ID.
-                // Aquí unificamos: buscamos video completo si es necesario.
                 let targetVid = video;
                 if (!targetVid.id) targetVid = videos.find(v => v.id === video);
 
@@ -628,7 +624,6 @@
                 setProfileFeedVideos(userVids);
                 setFeedMode('profile');
                 setActiveTab('home');
-                // Timeout para dar tiempo al render
                 setTimeout(() => {
                     setCurrentIndex(idx);
                     feedRef.current?.scrollTo({top: idx * feedRef.current.clientHeight, behavior: 'auto'});
@@ -682,7 +677,12 @@
                         </div>
                     )}
 
-                    <div ref={feedRef} onScroll={handleScroll} className={`flex-1 overflow-y-auto snap-y snap-mandatory no-scrollbar bg-gray-900 ${activeTab !== 'home' ? 'hidden' : ''}`}>
+                    <div 
+                        ref={feedRef} 
+                        onScroll={handleScroll} 
+                        className={`flex-1 overflow-y-auto snap-y snap-mandatory no-scrollbar bg-gray-900 ${activeTab !== 'home' ? 'hidden' : ''}`}
+                        style={{ scrollSnapStop: 'always' }}
+                    >
                         {currentFeedVideos.length > 0 ? currentFeedVideos.map((v, i) => (
                             <VideoPlayer 
                                 key={v.id} 
