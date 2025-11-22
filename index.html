@@ -139,7 +139,7 @@
         import { 
             Music2, Home, Search, Loader2, AlertTriangle, Copy, Play, Pause, 
             User as UserIcon, Hash, Bell, ArrowLeft, Edit3, Camera, Check, X, 
-            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle, FileText, Mic, Image, CornerUpLeft, Zap, MessageSquare
+            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle, FileText, Mic, Image, CornerUpLeft, Zap, MessageSquare, Smile
         } from 'https://esm.sh/lucide-react@0.344.0';
         
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -179,6 +179,20 @@
         // GIF de racha proporcionado por el usuario
         const STREAK_GIF_URL = "https://cdn.pixabay.com/animation/2025/06/26/05/26/05-26-59-506_512.gif";
         const VERIFIED_BADGE_URL = "https://static.vecteezy.com/system/resources/thumbnails/047/309/930/small/verified-badge-profile-icon-png.png";
+
+        // --- LISTA DE STICKERS ---
+        const STICKERS = [
+            STREAK_GIF_URL,
+            "https://s3.getstickerpack.com/storage/uploads/sticker-pack/ultimate-pepe-pack-2/sticker_10.png?e3fa3504b06ce285a7dec33686b96209",
+            "https://stickerly.pstatic.net/sticker_pack/GpTlbEuUtCid2gwPZCiAQ/27TIIH/16/26f3e8d8-e188-45f6-b039-4b261a354098.webp",
+            "https://stickerly.pstatic.net/sticker_pack/GpTlbEuUtCid2gwPZCiAQ/27TIIH/16/af0d5379-9a85-4bd0-969f-be4ddb9f6eaf.webp",
+            "https://stickerly.pstatic.net/sticker_pack/GpTlbEuUtCid2gwPZCiAQ/27TIIH/16/25abee0c-0f23-4af3-b527-f0314f89685f.webp",
+            "https://stickerly.pstatic.net/sticker_pack/5I4y11Rk4vxknlhFT0J1mw/9TWCRB/61/f96c86a0-4b45-47c3-b38e-8584e74f4fcb.webp",
+            "https://stickerly.pstatic.net/sticker_pack/5I4y11Rk4vxknlhFT0J1mw/9TWCRB/61/251129c4-a931-48e7-82fd-cfb94a086bb0.webp",
+            "https://stickerly.pstatic.net/sticker_pack/5I4y11Rk4vxknlhFT0J1mw/9TWCRB/61/331fee66-e576-4188-90cd-de4050f9d010.webp",
+            "https://s3.getstickerpack.com/storage/uploads/sticker-pack/monkeys-1/sticker_29.gif?368b8fcecd28f97edda1cff5fc55d18b"
+        ];
+
 
         // Función auxiliar para convertir Base64 a ArrayBuffer
         const base64ToArrayBuffer = (base64) => {
@@ -471,6 +485,15 @@
             );
         };
         
+        // --- CHAT: COMPONENTE DE STICKER ---
+        const StickerMessage = ({ stickerUrl }) => (
+            <img 
+                src={stickerUrl} 
+                alt="Sticker" 
+                className="max-w-[150px] max-h-[150px] object-contain rounded-xl shadow-lg"
+            />
+        );
+
         // --- CHAT: COMPONENTE DE MENSAJE CON MINiatura DE VIDEO ---
         const ChatVideoPreview = ({ video, isMe }) => {
             const [isPlaying, setIsPlaying] = useState(false);
@@ -559,9 +582,38 @@
             
             // Si el mensaje es de texto y tiene fileUrl (generado por TTS), lo tratamos como audio_tts
             const isAudioOrTTS = message.type === 'audio' || message.type === 'audio_tts' || (message.type === 'text' && message.fileUrl);
+            const isSticker = message.type === 'sticker';
 
             // Ajuste de posición del botón de respuesta para que esté pegado
             const replyButtonPositionClass = isMe ? 'right-[100%] mr-2' : 'left-[100%] ml-2';
+
+            if (isSticker) {
+                // Los stickers no tienen burbuja ni menú contextual (solo eliminar)
+                return (
+                    <div 
+                        className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative group`}
+                        onMouseDown={handleMouseDown}
+                        onMouseUp={handleMouseUp}
+                        onTouchStart={handleMouseDown}
+                        onTouchEnd={handleMouseUp}
+                        onTouchCancel={handleMouseUp}
+                    >
+                        {/* Botón de Eliminar (Solo para el dueño) */}
+                        {isMe && (
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
+                                className={`absolute z-20 transition-all duration-200 p-1 bg-red-600 border border-red-800 rounded-full text-white shadow-lg hover:bg-red-700 top-1/2 -translate-y-1/2 
+                                    left-[-20px] 
+                                    ${showMenu ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-3'}`}
+                            >
+                                <X size={16}/>
+                            </button>
+                        )}
+                        <StickerMessage stickerUrl={message.fileUrl} />
+                    </div>
+                );
+            }
+
 
             return (
                 <div 
@@ -792,6 +844,36 @@
             );
         };
         
+        // --- COMPONENTE MODAL DE STICKERS ---
+        const StickerModal = ({ isOpen, onClose, onSelectSticker }) => {
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
+                    <div className="bg-gray-900 w-full rounded-t-2xl p-6 border-t border-gray-700 animate-in slide-in-from-bottom">
+                        <h3 className="text-white font-bold text-lg mb-4 flex justify-between items-center">
+                            Enviar Sticker
+                            <button onClick={onClose}><X size={20} className="text-gray-400"/></button>
+                        </h3>
+
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-4 max-h-64 overflow-y-auto">
+                            {STICKERS.map((url, index) => (
+                                <div 
+                                    key={index}
+                                    className="aspect-square bg-gray-800 rounded-xl flex items-center justify-center cursor-pointer hover:bg-gray-700 transition"
+                                    onClick={() => onSelectSticker(url)}
+                                >
+                                    <img src={url} alt={`Sticker ${index + 1}`} className="max-w-[80%] max-h-[80%] object-contain" />
+                                </div>
+                            ))}
+                        </div>
+                        
+                    </div>
+                </div>
+            );
+        };
+
+
         // --- PANTALLAS ---
         const AuthScreen = () => {
             const [isRegistering, setIsRegistering] = useState(false);
@@ -922,6 +1004,49 @@
                     toggleLike(video, auth.currentUser.uid);
                 }
             };
+            
+            // Función para renderizar el texto con menciones interactivas
+            const renderDescriptionWithMentions = (text) => {
+                // Regex para encontrar @nombredeusuario
+                const mentionRegex = /@(\w+)/g;
+                let parts = [];
+                let lastIndex = 0;
+                let match;
+
+                while ((match = mentionRegex.exec(text)) !== null) {
+                    const before = text.substring(lastIndex, match.index);
+                    const mention = match[0];
+                    const username = match[1];
+
+                    if (before) {
+                        parts.push(<React.Fragment key={`text-${lastIndex}`}>{before}</React.Fragment>);
+                    }
+
+                    // Enlaces la mención al perfil
+                    parts.push(
+                        <span 
+                            key={`mention-${match.index}`} 
+                            className="text-cyan-400 font-semibold cursor-pointer pointer-events-auto hover:underline"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                // Aquí se necesitaría buscar el UID por username para ir al perfil
+                                // Como no tenemos un mapa UID/username, navegaremos usando el username como ID por simplicidad (aunque no es lo ideal en un sistema real)
+                                onVisitProfile(username); 
+                            }}
+                        >
+                            {mention}
+                        </span>
+                    );
+                    lastIndex = match.index + mention.length;
+                }
+
+                if (lastIndex < text.length) {
+                    parts.push(<React.Fragment key={`text-${lastIndex}`}>{text.substring(lastIndex)}</React.Fragment>);
+                }
+
+                return <p className="text-sm drop-shadow-md line-clamp-2 mb-4 text-gray-200 font-light leading-relaxed">{parts}</p>;
+            };
+
 
             const actionBtnClass = "p-2 bg-gray-800/80 rounded-xl border border-gray-600 backdrop-blur-md transition-all active:scale-90 hover:bg-gray-700 hover:border-gray-400 shadow-lg";
 
@@ -995,7 +1120,7 @@
                         <h3 className="font-bold text-lg drop-shadow-lg mb-2 text-gray-100 cursor-pointer pointer-events-auto w-fit" onClick={() => onVisitProfile(video.authorId)}>@{video.authorName}</h3>
                         {authorProfile.isVerified && <VerifiedBadge size={18} />}
                     </div>
-                    <p className="text-sm drop-shadow-md line-clamp-2 mb-4 text-gray-200 font-light leading-relaxed">{video.description}</p>
+                    {renderDescriptionWithMentions(video.description)}
                     <div className="flex items-center gap-2 text-xs font-medium bg-white/5 border border-white/10 w-fit px-4 py-2 rounded-full backdrop-blur-md shadow-sm">
                     <Music2 size={12} />
                     <span className="animate-marquee whitespace-nowrap max-w-[150px] overflow-hidden text-ellipsis">Sonido original - {video.authorName}</span>
@@ -1017,6 +1142,7 @@
 
             useEffect(() => {
                 if (!targetUserId) return;
+                // Escuchamos el perfil en tiempo real
                 const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId), (s) => {
                 if (s.exists()) setProfile(s.data());
                 });
@@ -1076,7 +1202,7 @@
                     </div>
                     <div className="flex items-center gap-1">
                         <h2 className="text-lg font-bold text-white">@{profile?.username || "Usuario"}</h2>
-                        {profile?.isVerified && <VerifiedBadge size={18} />}
+                        {profile?.isVerified && <VerifiedBadge size={18} />} {/* FIX: Usa profile?.isVerified */}
                     </div>
                     <p className="text-sm text-gray-400 text-center mt-1">{profile?.bio || "Sin biografía"}</p>
                     
@@ -1248,7 +1374,7 @@
                                 <button onClick={()=>{setPreview(null);setFile(null)}} className="absolute top-2 right-2 bg-black/50 p-1.5 rounded-full text-white hover:bg-black/80"><X size={16}/></button>
                             </div>
                         )}
-                        <textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Añade una descripción..." className="w-full bg-gray-900 text-white p-4 rounded-xl mt-6 h-24 outline-none resize-none border border-gray-700 focus:border-gray-500"/>
+                        <textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Añade una descripción (Ej: @usuario mira esto)..." className="w-full bg-gray-900 text-white p-4 rounded-xl mt-6 h-24 outline-none resize-none border border-gray-700 focus:border-gray-500"/>
                         {status && <p className="text-cyan-400 text-sm mt-2 animate-pulse">{status}</p>}
                         <button disabled={loading||!file} onClick={handleUpload} className="w-full bg-white text-black font-bold py-3.5 rounded-xl mt-auto mb-4 disabled:opacity-50 hover:bg-gray-200 transition shadow-lg">{loading?"Publicando...":"Publicar Video"}</button>
                     </div>
@@ -1441,6 +1567,7 @@
             const [file, setFile] = useState(null);
             const [replyTo, setReplyTo] = useState(null);
             const [isTyping, setIsTyping] = useState(false);
+            const [showStickerModal, setShowStickerModal] = useState(false); // NUEVO
             const endRef = useRef(null);
             
             const [isRecording, setIsRecording] = useState(false);
@@ -1571,6 +1698,7 @@
                     createdAt: new Date().toISOString(),
                     ...(type === 'text' || type === 'audio_tts' ? { text: content } : { fileUrl: content, fileType: fileDetails?.fileType || 'file' }),
                     ...(type === 'video' ? { videoId: content } : {}),
+                    ...(type === 'sticker' ? { fileUrl: content } : {}), // Para stickers
                     ...(replyTo ? { replyTo: { text: replyTo.text, type: replyTo.type, senderId: replyTo.senderId } } : {}),
                     ...(type === 'audio_tts' ? { fileUrl: fileDetails?.fileUrl } : {}) // Para el TTS, si la URL ya se generó
                 };
@@ -1593,6 +1721,12 @@
                         createdAt: new Date().toISOString()
                     });
                 }
+            };
+            
+            // NUEVO: Manejar la selección de stickers
+            const handleStickerSelect = (url) => {
+                sendMessage('sticker', url);
+                setShowStickerModal(false);
             };
 
             const sendTextOrAudio = () => {
@@ -1768,6 +1902,14 @@
 
                         <div className="flex gap-2 items-end"> {/* items-end para alinear con el textarea */}
                             
+                            {/* Botón para Stickers */}
+                            <button 
+                                onClick={() => setShowStickerModal(true)}
+                                className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0"
+                            >
+                                <Smile size={20}/>
+                            </button>
+                            
                             {/* Botón para Adjuntar */}
                             <label className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0">
                                 <FileText size={18}/>
@@ -1823,6 +1965,11 @@
                             </div>
                         </div>
                     </div>
+                    <StickerModal 
+                        isOpen={showStickerModal} 
+                        onClose={() => setShowStickerModal(false)} 
+                        onSelectSticker={handleStickerSelect}
+                    />
                 </div>
             );
         };
