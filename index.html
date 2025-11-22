@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>LiveClips</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Importante para que React funcione en el navegador -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <style>
@@ -13,13 +14,14 @@
             background-color: #000; 
             color: white; 
             overflow: hidden; 
-            /* Prevenir rebote en iOS */
+            /* Prevenir rebote en iOS/Android */
             overscroll-behavior: none;
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .animate-spin-slow { animation: spin 4s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        /* Filtro para poner el corazón de rojo */
         .filter-red { filter: invert(27%) sepia(51%) saturate(2878%) hue-rotate(346deg) brightness(104%) contrast(97%); }
         
         /* Animación de Notificación Toast */
@@ -31,6 +33,38 @@
         
         /* Ajuste para videos en grid */
         video { object-fit: cover; }
+
+        /* Animación de "escribiendo" */
+        @keyframes typing {
+            0% { opacity: 0.2; }
+            50% { opacity: 1; }
+            100% { opacity: 0.2; }
+        }
+        .typing-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            margin: 0 1px;
+            background-color: #38bdf8; /* cyan-400 */
+            border-radius: 50%;
+            animation: typing 1.5s infinite ease-in-out;
+        }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+        
+        /* Asegura que los mensajes antiguos se vean */
+        .message-list-container {
+            display: flex;
+            flex-direction: column-reverse; /* Hace que los nuevos mensajes aparezcan abajo */
+            overflow-y: auto;
+            flex: 1;
+        }
+        .message-list-content {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem; /* space-y-3 */
+            padding: 1rem; /* p-4 */
+        }
     </style>
 </head>
 <body>
@@ -42,7 +76,7 @@
         import { 
             Music2, Home, Search, Loader2, AlertTriangle, Copy, Play, Pause, 
             User as UserIcon, Hash, Bell, ArrowLeft, Edit3, Camera, Check, X, 
-            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle
+            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle, FileText, Mic, Image
         } from 'https://esm.sh/lucide-react@0.344.0';
         
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -55,6 +89,7 @@
             updateDoc, increment, query, orderBy, deleteDoc, where, limit, serverTimestamp
         } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
+        // --- CONFIGURACIÓN DE FIREBASE ---
         const firebaseConfig = {
             apiKey: "AIzaSyCqOTWcQ4uOC851_-j4JBUcENkCa-9xWdE",
             authDomain: "liveclips-93af8.firebaseapp.com",
@@ -70,16 +105,17 @@
         const db = getFirestore(app);
         const appId = 'tiktok-glass-universal';
 
+        // --- TUS ICONOS ORIGINALES ---
         const ICONS = {
             bandeja: "https://img.icons8.com/?size=100&id=JKQ8C03mfHVD&format=png&color=000000",
             perfil: "https://img.icons8.com/?size=100&id=AaFA8C8mpiZY&format=png&color=000000",
             corazon: "https://img.icons8.com/?size=100&id=sSZiheZL0ozl&format=png&color=000000",
             tendencia: "https://img.icons8.com/?size=100&id=g8O1NN7oS0KJ&format=png&color=000000",
-            comentarios: "https://img.icons8.com/?size=100&id=852Ge3pUkTzb&format=png&color=000000",
             compartir: "https://img.icons8.com/?size=100&id=Wv2O2Ve44Are&format=png&color=000000",
             crear: "https://img.icons8.com/?size=100&id=rrOG2bhnvx0w&format=png&color=000000" 
         };
 
+        // --- FUNCION PARA SUBIR ARCHIVOS A GITHUB ---
         const uploadToGitHub = async (file, path, setStatus) => {
             const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'github');
             const configSnap = await getDoc(configRef);
@@ -133,9 +169,82 @@
                 </div>
             );
         };
+        
+        // --- CHAT: COMPONENTE DE MENSAJE CON MENÚ DE CONTEXTO ---
+        const MessageBubble = ({ message, isMe, onDelete, onReply, videos }) => {
+            const [showMenu, setShowMenu] = useState(false);
+            const video = message.type === 'video' ? videos.find(v => v.id === message.videoId) : null;
+            
+            const handlePress = () => {
+                setShowMenu(true);
+                setTimeout(() => setShowMenu(false), 3000); // Cerrar después de 3s
+            };
 
-        // --- COMPONENTES DE LA APP ---
+            const isGif = message.type === 'image' && (message.fileUrl.toLowerCase().endsWith('.gif') || message.fileUrl.toLowerCase().includes('.gif'));
+            const fileIcon = message.fileType === 'audio' ? <Mic size={16} className={isMe ? 'text-black' : 'text-white'}/> : <FileText size={16} className={isMe ? 'text-black' : 'text-white'}/>;
 
+            return (
+                <div className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative`}>
+                    <div 
+                        onDoubleClick={handlePress} 
+                        onClick={handlePress} 
+                        className={`max-w-[70%] p-3 rounded-2xl text-sm transition-all relative ${isMe ? 'bg-white text-black' : 'bg-gray-800 text-white'} ${showMenu ? 'scale-[1.02] shadow-lg' : ''}`}
+                    >
+                        {/* Menú de Contexto */}
+                        {showMenu && (
+                            <div className={`absolute -top-8 ${isMe ? 'right-0' : 'left-0'} flex bg-gray-950 rounded-lg shadow-xl overflow-hidden border border-gray-700 z-10 text-xs`}>
+                                <button onClick={() => {onReply(message); setShowMenu(false);}} className="p-2 text-white hover:bg-gray-700 flex items-center gap-1">Responder</button>
+                                {isMe && <button onClick={() => {onDelete(message.id); setShowMenu(false);}} className="p-2 text-red-400 hover:bg-red-900/50 flex items-center gap-1">Borrar</button>}
+                            </div>
+                        )}
+
+                        {/* Mensaje de respuesta (citado) */}
+                        {message.replyTo && (
+                            <div className="p-2 mb-2 bg-white/10 border-l-4 border-cyan-400 rounded-md text-xs text-gray-300">
+                                <p className="font-bold text-cyan-400">Respondiendo a {message.replyTo.senderId === auth.currentUser.uid ? 'tí' : 'otro'}</p>
+                                <p className="truncate italic">{message.replyTo.text || message.replyTo.type}</p>
+                            </div>
+                        )}
+
+                        {/* Contenido del mensaje */}
+                        {message.type === 'text' && message.text}
+                        
+                        {message.type === 'image' && (
+                            <img 
+                                src={message.fileUrl} 
+                                alt={isGif ? "GIF animado" : "Imagen"} 
+                                className={`max-w-full rounded-lg ${isGif ? 'max-h-60' : 'max-h-48'}`}
+                            />
+                        )}
+                        
+                        {message.type === 'audio' && (
+                            <div className="flex items-center gap-2">
+                                {fileIcon}
+                                <audio controls src={message.fileUrl} className="w-full h-8" />
+                            </div>
+                        )}
+                        
+                        {message.type === 'file' && (
+                            <a href={message.fileUrl} target="_blank" className="flex items-center gap-2 text-cyan-400 hover:underline">
+                                {fileIcon} Archivo Adjunto
+                            </a>
+                        )}
+
+                        {message.type === 'video' && video && (
+                            <div className="relative aspect-[9/16] w-32 h-48 bg-black rounded-lg overflow-hidden">
+                                <video src={video.url + '#t=0.1'} className="w-full h-full object-cover" muted preload="metadata" />
+                                <div className="absolute inset-0 flex flex-col justify-end p-2 bg-gradient-to-t from-black/70 to-transparent">
+                                    <Play size={20} className="text-white fill-white mb-1"/>
+                                    <p className="text-xs font-bold text-white truncate">{video.description || 'Video Compartido'}</p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- PANTALLAS ---
         const AuthScreen = () => {
             const [isRegistering, setIsRegistering] = useState(false);
             const [username, setUsername] = useState("");
@@ -153,6 +262,7 @@
                     const uc = await createUserWithEmailAndPassword(auth, email, password);
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uc.user.uid), {
                         displayName: username, username, photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${uc.user.uid}`,
+                        bannerURL: 'https://placehold.co/600x150/1f2937/d1d5db?text=Toca+para+cambiar+el+Banner', // Banner por defecto
                         bio: "Hola, soy nuevo aquí.", createdAt: new Date().toISOString(), stats: { followers: 0, following: 0, likes: 0 }
                     });
                     await updateProfile(uc.user, { displayName: username });
@@ -188,6 +298,18 @@
             const [playing, setPlaying] = useState(false);
             const [progress, setProgress] = useState(0);
             const [buffering, setBuffering] = useState(false);
+            const [hasLiked, setHasLiked] = useState(false);
+
+            // Listener para verificar si ya dimos like
+            useEffect(() => {
+                if(!auth.currentUser || !video.id) return;
+                const likeRef = doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'likes', auth.currentUser.uid);
+                // Evitamos el error de "permission-denied" al inicio al verificar auth.currentUser
+                const unsubscribe = auth.currentUser ? onSnapshot(likeRef, (s) => {
+                    setHasLiked(s.exists());
+                }) : () => {};
+                return () => unsubscribe();
+            }, [video.id, auth.currentUser]); // Dependencia del usuario
 
             useEffect(() => {
                 const videoEl = videoRef.current;
@@ -233,10 +355,16 @@
                 if(videoRef.current) setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100);
             };
 
+            const handleLikeClick = () => {
+                if(!hasLiked) {
+                    toggleLike(video, auth.currentUser.uid);
+                }
+            };
+
             const actionBtnClass = "p-2 bg-gray-800/80 rounded-xl border border-gray-600 backdrop-blur-md transition-all active:scale-90 hover:bg-gray-700 hover:border-gray-400 shadow-lg";
 
             return (
-                <div className="relative w-full h-full snap-start bg-gray-900 overflow-hidden">
+                <div className="relative w-full h-full snap-start bg-gray-900 overflow-hidden" style={{ height: '100dvh' }}>
                 <video
                     ref={videoRef}
                     src={video.url}
@@ -271,14 +399,14 @@
                     </div>
                     </div>
 
-                    <button onClick={() => toggleLike(video)} className="flex flex-col items-center gap-1 group">
+                    <button onClick={handleLikeClick} disabled={hasLiked} className="flex flex-col items-center gap-1 group disabled:opacity-70">
                     <div className={actionBtnClass}>
-                        <img src={ICONS.corazon} className={`w-7 h-7 transition-all duration-300 drop-shadow-lg ${video.liked ? 'filter-red' : 'invert opacity-90'}`} />
+                        <img src={ICONS.corazon} className={`w-7 h-7 transition-all duration-300 drop-shadow-lg ${hasLiked ? 'filter-red' : 'invert opacity-90'}`} />
                     </div>
                     <span className="text-white text-xs font-medium drop-shadow-md">{video.likes}</span>
                     </button>
 
-                    <button onClick={() => onShare(video.url)} className="flex flex-col items-center gap-1 group">
+                    <button onClick={() => onShare(video.id)} className="flex flex-col items-center gap-1 group">
                     <div className={actionBtnClass}>
                         <img src={ICONS.compartir} className="w-7 h-7 invert opacity-90 drop-shadow-lg" />
                     </div>
@@ -347,16 +475,21 @@
             };
 
             return (
-                <div className="w-full h-full bg-gray-900 pt-14 overflow-y-auto pb-24 animate-in slide-in-from-right">
-                {!isMyProfile && (
-                    <div className="absolute top-0 left-0 w-full p-4 flex items-center gap-4 bg-gray-900/80 backdrop-blur-md z-40 border-b border-white/5">
-                        <button onClick={onBack}><ArrowLeft className="text-white"/></button>
-                        <span className="font-bold text-white">{profile?.displayName}</span>
-                    </div>
-                )}
+                <div className="w-full h-full bg-gray-900 overflow-y-auto pb-24 animate-in slide-in-from-right">
+                
+                {/* Banner */}
+                <div className="relative w-full h-40 bg-gray-950 border-b border-gray-800 shadow-md" style={{backgroundImage: `url(${profile?.bannerURL})`, backgroundSize: 'cover', backgroundPosition: 'center'}}>
+                    <div className="absolute inset-0 bg-black/30"></div>
+                    {!isMyProfile && (
+                        <div className="absolute top-0 left-0 w-full p-4 pt-8 flex items-center gap-4 z-10">
+                            <button onClick={onBack}><ArrowLeft className="text-white"/></button>
+                            <span className="font-bold text-white">{profile?.displayName}</span>
+                        </div>
+                    )}
+                </div>
 
-                <div className="flex flex-col items-center justify-center mb-6 px-4 mt-4">
-                    <div className="w-24 h-24 rounded-full border-2 border-gray-700 p-1 mb-3">
+                <div className="flex flex-col items-center justify-center mb-6 px-4 -mt-16 relative z-10">
+                    <div className="w-24 h-24 rounded-full border-4 border-gray-900 p-1 mb-3 bg-gray-900 shadow-xl">
                         <img src={profile?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${targetUserId}`} className="w-full h-full rounded-full bg-gray-800 object-cover" />
                     </div>
                     <h2 className="text-lg font-bold text-white">@{profile?.username || "Usuario"}</h2>
@@ -410,26 +543,72 @@
             );
         };
 
-        const EditProfileModal = ({ isOpen, onClose, user, profile, onUpdate }) => {
-            const [displayName, setDisplayName] = useState("");
-            const [bio, setBio] = useState("");
+        const EditProfileModal = ({ isOpen, onClose, user, profile }) => {
+            const [displayName, setDisplayName] = useState(profile?.displayName || "");
+            const [bio, setBio] = useState(profile?.bio || "");
             const [loading, setLoading] = useState(false);
-            useEffect(() => { if(profile) { setDisplayName(profile.displayName||""); setBio(profile.bio||""); } }, [profile]);
+            const photoInputRef = useRef(null);
+            const bannerInputRef = useRef(null);
+
+            useEffect(() => { 
+                if(profile) { setDisplayName(profile.displayName||""); setBio(profile.bio||""); } 
+            }, [profile]);
             
-            const handleSave = async () => {
+            const handleImageUpload = async (event, type) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                setLoading(true);
+                try {
+                    const path = `${type}s/${user.uid}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
+                    const url = await uploadToGitHub(file, path, (s) => alert(s)); // Usamos alert para mostrar estado
+                    
+                    const updateData = type === 'photo' ? { photoURL: url } : { bannerURL: url };
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), updateData);
+                } catch(e) {
+                    alert("Error al subir imagen: " + e.message);
+                }
+                setLoading(false);
+            };
+
+            const handleSaveText = async () => {
                 setLoading(true);
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), { displayName, bio });
                 setLoading(false); onClose();
             };
+
             if (!isOpen) return null;
             return (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
                 <div className="bg-gray-900 w-full max-w-xs rounded-xl p-6 border border-gray-700">
                     <h3 className="text-white font-bold mb-4">Editar Perfil</h3>
+                    
+                    {loading && <div className="text-cyan-400 mb-4 flex items-center gap-2"><Loader2 className="animate-spin" size={16}/> Cargando imágenes...</div>}
+
+                    <div className="flex flex-col items-center mb-4">
+                        <label className="relative cursor-pointer mb-2">
+                            <div className="w-16 h-16 rounded-full border-2 border-white overflow-hidden bg-gray-800">
+                                <img src={profile?.photoURL} className="w-full h-full object-cover"/>
+                            </div>
+                            <div className="absolute bottom-0 right-0 bg-cyan-600 rounded-full p-1.5 border border-gray-900"><Camera size={14} className="text-white"/></div>
+                            <input type="file" accept="image/*" className="hidden" ref={photoInputRef} onChange={(e) => handleImageUpload(e, 'photo')} />
+                        </label>
+                        <button onClick={() => photoInputRef.current.click()} className="text-xs text-gray-400 hover:text-white">Cambiar Foto</button>
+                    </div>
+
+                    <div className="w-full mb-4">
+                        <label className="relative cursor-pointer w-full h-16 block bg-gray-800 border border-gray-600 rounded-lg overflow-hidden">
+                            <img src={profile?.bannerURL} className="w-full h-full object-cover"/>
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 hover:bg-black/60 transition"><Camera size={18} className="text-white"/></div>
+                            <input type="file" accept="image/*" className="hidden" ref={bannerInputRef} onChange={(e) => handleImageUpload(e, 'banner')} />
+                        </label>
+                        <button onClick={() => bannerInputRef.current.click()} className="text-xs text-gray-400 hover:text-white mt-1 block">Cambiar Banner (GIF permitido)</button>
+                    </div>
+
                     <input value={displayName} onChange={e => setDisplayName(e.target.value)} className="w-full bg-gray-800 text-white p-3 rounded-lg mb-3 outline-none" placeholder="Nombre" />
                     <textarea value={bio} onChange={e => setBio(e.target.value)} className="w-full bg-gray-800 text-white p-3 rounded-lg mb-4 outline-none" placeholder="Bio" rows={3} />
-                    <button onClick={handleSave} disabled={loading} className="w-full bg-white text-black font-bold py-3 rounded-lg">{loading?"Guardando...":"Guardar"}</button>
-                    <button onClick={onClose} className="w-full text-gray-400 text-sm mt-3">Cancelar</button>
+                    <button onClick={handleSaveText} disabled={loading} className="w-full bg-white text-black font-bold py-3 rounded-lg">{loading ? "Guardando..." : "Guardar Texto"}</button>
+                    <button onClick={onClose} className="w-full text-gray-400 text-sm mt-3">Cerrar</button>
                 </div>
                 </div>
             );
@@ -549,16 +728,27 @@
                         myChats.map(chat => {
                             const otherUid = chat.participants.find(uid => uid !== user.uid);
                             const otherName = chat.participantsData?.[otherUid]?.displayName || "Usuario";
-                            // Fallback para obtener la imagen de los participantes si está en la data
                             const otherImg = `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`; 
                             
+                            // Verificar racha
+                            const isStreakActive = chat.streak && chat.streak.count > 0 && 
+                                (new Date().getTime() - new Date(chat.streak.lastMessageTime).getTime() < 86400000);
+
                             return (
                                 <div key={chat.id} onClick={() => onOpenChat(chat.id)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800">
-                                    <div className="w-12 h-12 rounded-full bg-gray-700 overflow-hidden border border-gray-600">
+                                    <div className="w-12 h-12 rounded-full bg-gray-700 overflow-hidden border border-gray-600 flex-shrink-0 relative">
                                         <img src={otherImg} className="w-full h-full object-cover"/>
+                                        {isStreakActive && (
+                                            <div className="absolute -bottom-1 -right-1 bg-yellow-500 rounded-full w-5 h-5 flex items-center justify-center text-[10px] font-bold shadow-lg">
+                                                🔥
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="flex-1">
-                                        <p className="font-bold text-white">{otherName}</p>
+                                        <p className="font-bold text-white flex items-center gap-2">
+                                            {otherName} 
+                                            {isStreakActive && <span className="text-yellow-400 text-xs">x{chat.streak.count}</span>}
+                                        </p>
                                         <p className="text-xs text-gray-400">Toca para chatear</p>
                                     </div>
                                 </div>
@@ -581,35 +771,138 @@
             );
         };
 
-        const ChatScreen = ({ chatId, user, onClose }) => {
+        const ChatScreen = ({ chatId, user, onClose, videos }) => {
             const [messages, setMessages] = useState([]);
             const [txt, setTxt] = useState("");
+            const [file, setFile] = useState(null);
+            const [replyTo, setReplyTo] = useState(null);
+            const [isTyping, setIsTyping] = useState(false);
             const endRef = useRef(null);
+            
+            const [isRecording, setIsRecording] = useState(false);
+            const mediaRecorderRef = useRef(null);
+            const audioChunksRef = useRef([]);
+            const typingTimerRef = useRef(null);
 
+            // Listener de mensajes
             useEffect(() => {
                 if(!chatId) return;
-                const q = query(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), orderBy('createdAt', 'asc'));
+                const q = query(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), orderBy('createdAt', 'desc')); // Orden descendente para cargar al revés
                 const unsub = onSnapshot(q, s => {
-                    setMessages(s.docs.map(d => d.data()));
-                    setTimeout(() => endRef.current?.scrollIntoView({behavior:'smooth'}), 100);
+                    setMessages(s.docs.map(d => ({id: d.id, ...d.data()})));
                 });
                 return () => unsub();
             }, [chatId]);
-
-            const send = async () => {
-                if(!txt.trim()) return;
-                
-                // Enviar mensaje
-                await addDoc(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), {
-                    text: txt, senderId: user.uid, createdAt: new Date().toISOString()
+            
+            // Scroll al final al cargar mensajes
+            useEffect(() => {
+                if (endRef.current) {
+                    endRef.current.scrollIntoView({ behavior: 'smooth' });
+                }
+            }, [messages.length]);
+            
+            // Listener del Typing Indicator (Obtiene el estado de "escribiendo" del chat doc)
+            useEffect(() => {
+                if(!chatId) return;
+                const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
+                return onSnapshot(chatRef, (snap) => {
+                    const typingUser = snap.data().typing;
+                    if (typingUser && typingUser !== user.uid) {
+                        setIsTyping(true);
+                    } else {
+                        setIsTyping(false);
+                    }
                 });
+            }, [chatId]);
+            
+            // Función para actualizar el estado de "escribiendo" en Firebase
+            const setTypingStatus = (status) => {
+                const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
+                updateDoc(chatRef, { typing: status ? user.uid : null }).catch(console.error);
+            };
+
+            // Manejar la escritura del usuario
+            const handleTextChange = (e) => {
+                setTxt(e.target.value);
                 
-                // Encontrar al otro usuario para notificarle
+                if (e.target.value.length > 0) {
+                    if (!typingTimerRef.current) {
+                        setTypingStatus(true);
+                    }
+                    clearTimeout(typingTimerRef.current);
+                    typingTimerRef.current = setTimeout(() => {
+                        setTypingStatus(false);
+                        typingTimerRef.current = null;
+                    }, 3000);
+                } else {
+                    clearTimeout(typingTimerRef.current);
+                    setTypingStatus(false);
+                    typingTimerRef.current = null;
+                }
+            };
+            
+            // Cleanup para el typing indicator al salir
+            useEffect(() => {
+                return () => {
+                    clearTimeout(typingTimerRef.current);
+                    if (auth.currentUser) setTypingStatus(false);
+                };
+            }, [chatId]);
+            
+            const updateStreak = async () => {
+                const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
+                const snap = await getDoc(chatRef);
+                if (!snap.exists()) return;
+
+                const chatData = snap.data();
+                const now = new Date().getTime();
+                
+                const lastTime = chatData.streak ? new Date(chatData.streak.lastMessageTime).getTime() : 0;
+                const lastSender = chatData.streak ? chatData.streak.lastSenderId : null;
+                const currentCount = chatData.streak ? chatData.streak.count : 0;
+                
+                const isWithin24Hours = (now - lastTime) < 86400000; // 24 horas en ms
+                const streakLost = (now - lastTime) >= 86400000;
+
+                let newCount = currentCount;
+
+                if (currentCount === 0) {
+                    newCount = 1; 
+                } else if (isWithin24Hours && lastSender !== user.uid) {
+                    newCount = currentCount + 1; 
+                } else if (streakLost) {
+                    newCount = 1; 
+                } else if (lastSender === user.uid) {
+                    newCount = currentCount; 
+                }
+                
+                await updateDoc(chatRef, {
+                    streak: {
+                        count: newCount,
+                        lastMessageTime: new Date().toISOString(),
+                        lastSenderId: user.uid
+                    }
+                });
+            };
+
+            const sendMessage = async (type, content, fileDetails = null) => {
+                const message = {
+                    type,
+                    senderId: user.uid,
+                    createdAt: new Date().toISOString(),
+                    ...(type === 'text' ? { text: content } : { fileUrl: content, fileType: fileDetails?.fileType || 'file' }),
+                    ...(type === 'video' ? { videoId: content } : {}),
+                    ...(replyTo ? { replyTo: { text: replyTo.text, type: replyTo.type, senderId: replyTo.senderId } } : {}),
+                };
+
+                await addDoc(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), message);
+                await updateStreak(); 
+                setTypingStatus(false); 
+                
                 const chatDoc = await getDoc(doc(db, 'artifacts', appId, 'chats', chatId));
                 const participants = chatDoc.data().participants;
                 const receiverId = participants.find(id => id !== user.uid);
                 
-                // Crear notificación
                 if (receiverId) {
                     const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
                     await addDoc(collection(db, 'artifacts', appId, 'users', receiverId, 'notifications'), {
@@ -620,32 +913,238 @@
                         createdAt: new Date().toISOString()
                     });
                 }
+            };
 
+            const sendText = () => {
+                if(!txt.trim()) return;
+                sendMessage('text', txt.trim());
                 setTxt("");
+                setReplyTo(null);
+            };
+
+            const handleFileSelect = (e) => {
+                const selectedFile = e.target.files[0];
+                if (selectedFile) {
+                    setFile(selectedFile);
+                    setTxt(selectedFile.name); 
+                }
+            };
+
+            const sendFile = async (selectedFile = file) => {
+                if (!selectedFile) return;
+
+                const fileExtension = selectedFile.name.split('.').pop().toLowerCase();
+                let fileType = 'file'; 
+                if (['png', 'jpg', 'jpeg', 'gif'].includes(fileExtension)) fileType = 'image';
+                else if (['mp3', 'wav', 'ogg'].includes(fileExtension)) fileType = 'audio';
+                
+                setTxt("Subiendo archivo...");
+                const path = `chats/${chatId}/${Date.now()}_${selectedFile.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
+                
+                try {
+                    const url = await uploadToGitHub(selectedFile, path);
+                    sendMessage(fileType, url, { fileType });
+                } catch(e) {
+                    alert("Error al subir archivo: " + e.message);
+                } finally {
+                    setFile(null);
+                    setTxt("");
+                    setReplyTo(null);
+                }
+            };
+            
+            // --- LÓGICA DE GRABACIÓN DE AUDIO REAL ---
+            const startRecording = async () => {
+                if (isRecording) return;
+                
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const options = { mimeType: 'audio/webm' };
+                    const recorder = new MediaRecorder(stream, options);
+                    mediaRecorderRef.current = recorder;
+                    audioChunksRef.current = [];
+                    
+                    recorder.ondataavailable = (event) => {
+                        audioChunksRef.current.push(event.data);
+                    };
+                    
+                    recorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+                        const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: 'audio/webm' });
+                        await sendFile(audioFile); // Usar la función sendFile existente para subir a GitHub
+                        stream.getTracks().forEach(track => track.stop()); // Detener el micrófono
+                    };
+
+                    recorder.start();
+                    setIsRecording(true);
+                    setTxt("Grabando...");
+                    
+                } catch (err) {
+                    alert('Error al acceder al micrófono: ' + err.message);
+                    setIsRecording(false);
+                }
+            };
+            
+            const stopRecording = () => {
+                if (mediaRecorderRef.current && isRecording) {
+                    mediaRecorderRef.current.stop();
+                    setIsRecording(false);
+                    setTxt("");
+                }
+            };
+
+
+            const deleteMsg = async (msgId) => {
+                if (window.confirm("¿Seguro que quieres borrar este mensaje?")) {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'chats', chatId, 'messages', msgId));
+                }
+            };
+            
+            const handleKeyDown = (e) => {
+                if (e.key === 'Enter') {
+                    if (file) {
+                        sendFile();
+                    } else {
+                        sendText();
+                    }
+                }
             };
 
             return (
-                <div className="absolute inset-0 z-50 bg-gray-900 flex flex-col animate-in slide-in-from-right">
+                <div className="absolute inset-0 z-50 bg-gray-900 flex flex-col animate-in slide-in-from-right h-[100dvh]">
                     <div className="p-4 bg-gray-900 border-b border-gray-800 flex items-center gap-4">
                         <button onClick={onClose}><ArrowLeft className="text-white"/></button>
                         <span className="font-bold text-white">Chat</span>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                        {messages.map((m, i) => {
-                            const isMe = m.senderId === user.uid;
-                            return (
-                                <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`max-w-[70%] p-3 rounded-2xl text-sm ${isMe ? 'bg-white text-black' : 'bg-gray-800 text-white'}`}>
-                                        {m.text}
-                                    </div>
-                                </div>
-                            )
-                        })}
-                        <div ref={endRef}/>
+                    <div className="message-list-container">
+                        <div ref={endRef} />
+                        <div className="message-list-content">
+                            {/* Los mensajes se mapean inversamente por el CSS column-reverse, pero la fuente está en orden ascendente */}
+                            {messages.slice().reverse().map((m) => ( 
+                                <MessageBubble 
+                                    key={m.id} 
+                                    message={m} 
+                                    isMe={m.senderId === user.uid} 
+                                    onDelete={deleteMsg}
+                                    onReply={setReplyTo}
+                                    videos={videos}
+                                />
+                            ))}
+                        </div>
                     </div>
-                    <div className="p-3 bg-gray-900 border-t border-gray-800 flex gap-2">
-                        <input value={txt} onChange={e=>setTxt(e.target.value)} className="flex-1 bg-gray-800 text-white p-3 rounded-full outline-none" placeholder="Mensaje..." onKeyDown={e=>e.key==='Enter'&&send()}/>
-                        <button onClick={send} className="p-3 bg-white rounded-full text-black"><Send size={18}/></button>
+                    
+                    {/* Input y barra de respuesta */}
+                    <div className="p-3 bg-gray-900 border-t border-gray-800 flex flex-col gap-2">
+                        {replyTo && (
+                            <div className="flex items-center justify-between p-2 bg-gray-800 rounded-lg text-sm border-l-4 border-cyan-400">
+                                <span className="text-gray-300 italic truncate">Respondiendo a: {replyTo.text || replyTo.type}</span>
+                                <button onClick={() => setReplyTo(null)} className="text-red-400 ml-2"><X size={16}/></button>
+                            </div>
+                        )}
+
+                        <div className="flex gap-2 items-center">
+                            
+                            {/* Botón para Adjuntar */}
+                            <label className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition">
+                                <FileText size={18}/>
+                                <input type="file" className="hidden" onChange={handleFileSelect} />
+                            </label>
+
+                            {/* Campo de Texto */}
+                            <input 
+                                value={txt} 
+                                onChange={handleTextChange} 
+                                className="flex-1 bg-gray-800 text-white p-3 rounded-full outline-none" 
+                                placeholder={isRecording ? "Grabando audio..." : (file ? file.name : "Mensaje...")}
+                                onKeyDown={handleKeyDown}
+                                disabled={file || isRecording}
+                            />
+                            
+                            {/* Botón de Enviar o Audio */}
+                            {txt.trim() || file ? (
+                                <button onClick={file ? sendFile : sendText} className="p-3 bg-white rounded-full text-black"><Send size={18}/></button>
+                            ) : (
+                                <button 
+                                    onMouseDown={startRecording}
+                                    onMouseUp={stopRecording}
+                                    onTouchStart={startRecording}
+                                    onTouchEnd={stopRecording}
+                                    className={`p-3 rounded-full transition-all ${isRecording ? 'bg-red-500 scale-110 text-white' : 'bg-gray-800 text-white hover:bg-gray-700'}`}
+                                >
+                                    <Mic size={18}/>
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- MODAL PARA COMPARTIR VIDEO ---
+        const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => {
+            const [selectedChat, setSelectedChat] = useState(null);
+
+            const handleSend = async () => {
+                if (!selectedChat) return;
+                
+                const message = {
+                    type: 'video',
+                    videoId: videoId,
+                    senderId: user.uid,
+                    createdAt: new Date().toISOString(),
+                };
+                
+                await addDoc(collection(db, 'artifacts', appId, 'chats', selectedChat, 'messages'), message);
+
+                // Lógica de notificación y racha (simplificada para el modal)
+                await updateDoc(doc(db, 'artifacts', appId, 'chats', selectedChat), {
+                    streak: {
+                        count: increment(1),
+                        lastMessageTime: new Date().toISOString(),
+                        lastSenderId: user.uid
+                    }
+                });
+                
+                onClose();
+            };
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
+                    <div className="bg-gray-900 w-full rounded-t-2xl p-6 border-t border-gray-700 animate-in slide-in-from-bottom">
+                        <h3 className="text-white font-bold text-lg mb-4 flex justify-between items-center">
+                            Compartir en Chat
+                            <button onClick={onClose}><X size={20} className="text-gray-400"/></button>
+                        </h3>
+
+                        <div className="max-h-64 overflow-y-auto space-y-3 mb-6">
+                            {chats.filter(c => c.status === 'accepted').map(chat => {
+                                const otherUid = chat.participants.find(uid => uid !== user.uid);
+                                const otherName = chat.participantsData?.[otherUid]?.displayName || "Usuario";
+                                const isSelected = selectedChat === chat.id;
+
+                                return (
+                                    <div 
+                                        key={chat.id} 
+                                        onClick={() => setSelectedChat(chat.id)}
+                                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${isSelected ? 'bg-cyan-600 border-cyan-400' : 'bg-gray-800/40 border-gray-700 hover:bg-gray-800'}`}
+                                    >
+                                        <div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden border border-gray-600 flex items-center justify-center text-white text-sm font-bold uppercase">{otherName[0]}</div>
+                                        <span className="font-medium text-white">{otherName}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        
+                        <button 
+                            onClick={handleSend}
+                            disabled={!selectedChat}
+                            className="w-full py-3.5 bg-white text-black font-bold rounded-xl disabled:opacity-50 hover:bg-gray-200 transition"
+                        >
+                            Enviar Video
+                        </button>
+
                     </div>
                 </div>
             );
@@ -654,47 +1153,45 @@
         const App = () => {
             const [user, setUser] = useState(null);
             const [videos, setVideos] = useState([]);
+            const [chats, setChats] = useState([]); 
             const [activeTab, setActiveTab] = useState('home');
             const [currentIndex, setCurrentIndex] = useState(0);
             const [showUpload, setShowUpload] = useState(false);
+            const [showShare, setShowShare] = useState(null); 
             const [viewingProfile, setViewingProfile] = useState(null);
             const [activeChatId, setActiveChatId] = useState(null);
             const [feedMode, setFeedMode] = useState('global');
             const [profileFeedVideos, setProfileFeedVideos] = useState([]);
             const [notifications, setNotifications] = useState([]);
-            const [latestToast, setLatestToast] = useState(null); // Para el Toast
+            const [latestToast, setLatestToast] = useState(null);
             
             const feedRef = useRef(null);
 
             useEffect(() => onAuthStateChanged(auth, setUser), []);
 
-            // Listener de videos
+            // Listener de datos
             useEffect(() => {
                 if(!user) return;
-                const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), orderBy('createdAt', 'desc'));
-                return onSnapshot(q, s => setVideos(s.docs.map(d => ({id: d.id, ...d.data()}))));
-            }, [user]);
-
-            // Listener de notificaciones globales
-            useEffect(() => {
-                if (!user) return;
-                const q = query(collection(db, 'artifacts', appId, 'users', user.uid, 'notifications'), orderBy('createdAt', 'desc'), limit(10));
-                const unsub = onSnapshot(q, (snapshot) => {
+                // Videos
+                const unsubVideos = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), orderBy('createdAt', 'desc')), s => setVideos(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                // Chats
+                const unsubChats = onSnapshot(query(collection(db, 'artifacts', appId, 'chats'), where('participants', 'array-contains', user.uid)), s => setChats(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                // Notificaciones
+                const qNotifs = query(collection(db, 'artifacts', appId, 'users', user.uid, 'notifications'), orderBy('createdAt', 'desc'), limit(10));
+                const unsubNotifs = onSnapshot(qNotifs, (snapshot) => {
                     const notifs = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
-                    
-                    // Si hay una notificación nueva (creada hace menos de 5 segundos), mostrar Toast
                     if (notifs.length > 0) {
                         const newest = notifs[0];
                         const now = new Date().getTime();
                         const notifTime = new Date(newest.createdAt).getTime();
-                        // Si es reciente (menos de 10s) y es diferente a la anterior mostrada
                         if (now - notifTime < 10000) {
                             setLatestToast(newest);
                         }
                     }
                     setNotifications(notifs);
                 });
-                return () => unsub();
+                
+                return () => { unsubVideos(); unsubChats(); unsubNotifs(); };
             }, [user]);
 
             const handleScroll = () => {
@@ -704,16 +1201,25 @@
                 }
             };
 
-            const toggleLike = async (video) => {
-                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), { likes: increment(1) });
-                if(video.authorId !== user.uid) {
-                    const uData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
-                    await addDoc(collection(db, 'artifacts', appId, 'users', video.authorId, 'notifications'), {
-                        type: 'like', fromUser: user.uid, fromName: uData.displayName, avatar: uData.photoURL, thumbnail: video.url, createdAt: new Date().toISOString()
-                    });
+            const toggleLike = async (video, likerId) => {
+                const likeRef = doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'likes', likerId);
+                const likeSnap = await getDoc(likeRef);
+
+                if (likeSnap.exists()) {
+                    return; 
+                } else {
+                    await setDoc(likeRef, { userId: likerId, createdAt: new Date().toISOString() });
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), { likes: increment(1) });
+                    
+                    if(video.authorId !== user.uid) {
+                        const uData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
+                        await addDoc(collection(db, 'artifacts', appId, 'users', video.authorId, 'notifications'), {
+                            type: 'like', fromUser: user.uid, fromName: uData.displayName, avatar: uData.photoURL, thumbnail: video.url, createdAt: new Date().toISOString()
+                        });
+                    }
                 }
             };
-
+            
             const goToProfile = (uid) => {
                 setViewingProfile(uid);
                 setActiveTab('profile');
@@ -760,7 +1266,6 @@
                             [targetUid]: { displayName: targetProfile.displayName || "Usuario" }
                         },
                         status: 'pending',
-                        targetId: targetUid,
                         createdAt: new Date().toISOString()
                     });
                     alert("Solicitud enviada");
@@ -796,7 +1301,7 @@
                                 video={v} 
                                 isActive={i === currentIndex && activeTab === 'home'} 
                                 toggleLike={toggleLike} 
-                                onShare={()=>{}} 
+                                onShare={(id) => setShowShare(id)} 
                                 onVisitProfile={goToProfile}
                             />
                         )) : <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-white/50"/></div>}
@@ -851,8 +1356,9 @@
                     </div>
 
                     <UploadModal isOpen={showUpload} onClose={() => setShowUpload(false)} user={user} />
+                    <ShareVideoModal isOpen={!!showShare} onClose={() => setShowShare(null)} videoId={showShare} user={user} chats={chats} />
                     
-                    {activeChatId && <ChatScreen chatId={activeChatId} user={user} onClose={() => setActiveChatId(null)} />}
+                    {activeChatId && <ChatScreen chatId={activeChatId} user={user} onClose={() => setActiveChatId(null)} videos={videos} />}
                     
                 </div>
                 </div>
