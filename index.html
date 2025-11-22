@@ -318,8 +318,10 @@
         const AudioMessage = ({ audioUrl, isMe, onGeneration, text }) => {
             const audioRef = useRef(new Audio(audioUrl));
             const [isPlaying, setIsPlaying] = useState(false);
-            // El audio está pendiente de carga si no hay URL Y hay texto largo para TTS
-            const [isLoading, setIsLoading] = useState(!audioUrl && text?.length > 100); 
+            // Si el mensaje es audio de micrófono/imagen/sticker, fileUrl existe y no intentamos TTS.
+            // Solo intentamos TTS si NO hay fileUrl y el texto es largo.
+            const needsTTS = !audioUrl && text?.length > 100;
+            const [isLoading, setIsLoading] = useState(needsTTS); 
             const [error, setError] = useState(null);
             
             // Simulación de la forma de onda
@@ -327,18 +329,15 @@
                 <div key={i} className="waveform-bar" style={{height: `${Math.random() * 80 + 20}%`}}></div>
             ));
 
-            // Generar audio si no hay URL
+            // Generar audio si no hay URL y es un mensaje de texto largo (TTS)
             useEffect(() => {
                 if (audioUrl) {
-                    // Si ya tenemos URL, solo cargamos el audio y salimos
                     audioRef.current.src = audioUrl;
                     setIsLoading(false);
                     return;
                 }
                 
-                // Si no tenemos URL, y el texto es largo, procedemos a generar TTS
-                if (!text || text.length < 100) {
-                    // Si el mensaje es de texto corto, no es un error, simplemente no es un audio TTS.
+                if (!needsTTS) {
                     setIsLoading(false);
                     return;
                 }
@@ -399,23 +398,17 @@
                         }
                     } catch (e) {
                         setError("Falló la generación de audio: " + e.message);
+                        onGeneration(null); // Notificar error al padre
                     } finally {
                         setIsLoading(false);
                     }
                 };
 
-                // Solamente generamos si isLoading es true (solo se pone true si hay texto largo sin URL)
-                if (isLoading) {
+                // Solamente generamos si needsTTS es true y estamos en estado de carga
+                if (needsTTS && isLoading) {
                     generateAndSetAudio();
                 }
-
-                return () => {
-                    // Limpieza del objeto URL para evitar memory leaks
-                    if (audioRef.current && audioRef.current.src && audioRef.current.src.startsWith('blob:')) {
-                        URL.revokeObjectURL(audioRef.current.src);
-                    }
-                };
-            }, [text, audioUrl, onGeneration, isLoading]);
+            }, [text, audioUrl, onGeneration, needsTTS, isLoading]);
 
 
             useEffect(() => {
@@ -426,8 +419,12 @@
                 return () => {
                     audio.removeEventListener('ended', onEnded);
                     audio.removeEventListener('pause', onEnded);
+                    // Limpieza del objeto URL
+                    if (audioRef.current && audioRef.current.src && audioRef.current.src.startsWith('blob:')) {
+                        URL.revokeObjectURL(audioRef.current.src);
+                    }
                 };
-            }, []);
+            }, [audioUrl]);
 
             const togglePlay = () => {
                 const audio = audioRef.current;
@@ -462,7 +459,7 @@
                 );
             }
 
-            // Si es un mensaje de texto corto (no TTS ni audio de micrófono)
+            // Si es un mensaje de texto corto (no TTS ni audio de micrófono/archivo)
             if (!audioUrl && text && text.length <= 100) {
                 return <p className="whitespace-pre-wrap">{text}</p>;
             }
@@ -625,7 +622,8 @@
             };
 
             // Inicia el temporizador al presionar
-            const handleMouseDown = () => {
+            const handleMouseDown = (e) => {
+                if(e.button === 2) return; // Ignorar clic derecho
                 clearTimeout(pressTimer.current);
                 pressTimer.current = setTimeout(() => {
                     setShowMenu(true);
@@ -640,7 +638,7 @@
             };
 
             const isGif = message.type === 'image' && (message.fileUrl.toLowerCase().endsWith('.gif') || message.fileUrl.toLowerCase().includes('.gif'));
-            const isAudioOrTTS = message.type === 'audio' || message.type === 'audio_tts' || (message.type === 'text' && message.fileUrl && message.text?.length > 100);
+            const isAudioOrTTS = message.type === 'audio' || message.type === 'audio_tts' || (message.type === 'text' && message.text?.length > 100);
             const isSticker = message.type === 'sticker';
             const isGameInvite = message.type === 'game_invite';
 
@@ -789,7 +787,7 @@
             );
         };
 
-        // --- MODALES (Movidos para ser declarado antes de App) ---
+        // --- MODALES ---
         
         // --- COMPONENTE MODAL DE COMENTARIOS ---
         const CommentsModal = ({ isOpen, onClose, video, user }) => {
@@ -1029,15 +1027,15 @@
         };
         
         // --- COMPONENTE MODAL PARA COMPARTIR VIDEO (MOVIdo para ser declarado antes de App) ---
-        const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => { // FIX: Agregado videoId
+        const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => { 
             const [selectedChat, setSelectedChat] = useState(null);
 
             const handleSend = async () => {
-                if (!user?.uid || !selectedChat || !videoId) return; // FIX: Verificado videoId
+                if (!user?.uid || !selectedChat || !videoId) return; 
                 
                 const message = {
                     type: 'video',
-                    videoId: videoId, // FIX: Usado la prop videoId
+                    videoId: videoId, 
                     senderId: user.uid,
                     createdAt: new Date().toISOString(),
                 };
@@ -1074,7 +1072,9 @@
                         count: newCount,
                         lastMessageTime: new Date().toISOString(),
                         lastSenderId: user.uid
-                    }
+                    },
+                    lastMessageTime: new Date().toISOString(),
+                    lastSenderId: user.uid
                 });
                 
                 onClose();
@@ -1371,7 +1371,7 @@
                 <div className="absolute bottom-24 left-4 right-20 z-20 text-white pointer-events-none">
                     <div className="flex items-center gap-1">
                         <h3 className="font-bold text-lg drop-shadow-lg mb-2 text-gray-100 cursor-pointer pointer-events-auto w-fit" onClick={() => onVisitProfile(video.authorId)}>@{video.authorName}</h3>
-                        {authorProfile.isVerified && <VerifiedBadge size={18} />}
+                        {authorProfile.isVerified && <VerifiedBadge size={18} />} {/* FIX: Usa profile?.isVerified */}
                     </div>
                     {renderDescriptionWithMentions(video.description)}
                     <div className="flex items-center gap-2 text-xs font-medium bg-white/5 border border-white/10 w-fit px-4 py-2 rounded-full backdrop-blur-md shadow-sm">
@@ -1726,9 +1726,8 @@
                 // Usamos el campo 'lastRead' del usuario actual
                 const lastReadTime = chat.participantsData?.[currentUserId]?.lastRead || 0;
                 
-                // Si el chat tiene una marca de tiempo del último mensaje y es posterior a nuestra última lectura
-                if (chat.lastMessageTime && new Date(chat.lastMessageTime).getTime() > new Date(lastReadTime).getTime()) {
-                    // Contamos este chat como no leído
+                // Usamos el campo lastMessageTime del chat (que se actualiza al enviar)
+                if (chat.lastMessageTime && chat.lastSenderId !== currentUserId && new Date(chat.lastMessageTime).getTime() > new Date(lastReadTime).getTime()) {
                     acc++;
                 }
                 return acc;
@@ -1739,13 +1738,11 @@
              const lastReadTime = chat.participantsData?.[currentUserId]?.lastRead || 0;
              const lastMessageTime = chat.lastMessageTime ? new Date(chat.lastMessageTime).getTime() : 0;
              
-             // Simplificamos la lógica: si el último mensaje fue enviado por el otro usuario y es más reciente que nuestra última lectura.
+             // Es no leído si el último mensaje lo envió otro usuario Y la hora del último mensaje es posterior a mi última lectura.
              const isFromOtherUser = chat.lastSenderId !== currentUserId;
              const isUnread = lastMessageTime > new Date(lastReadTime).getTime();
 
-             // Este contador es una SIMULACIÓN de chat no leído, no cuenta el número exacto de mensajes.
-             // Para un conteo exacto se requeriría una subcolección dedicada o un campo 'unreadCount' por usuario.
-             // Aquí devolvemos 1 (no leído) o 0 (leído) basado en la marca de tiempo.
+             // Devolvemos 1 (no leído) o 0 (leído)
              return isUnread && isFromOtherUser ? 1 : 0; 
         }
 
@@ -1769,9 +1766,13 @@
                 await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted', targetId: null });
                 
                 const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
-                 await addDoc(collection(db, 'artifacts', appId, 'users', targetUid, 'notifications'), {
+                const otherUser = allUsers[targetUid]; // Obtener los datos del otro usuario
+                
+                await addDoc(collection(db, 'artifacts', appId, 'users', targetUid, 'notifications'), {
                     type: 'message_accept', fromUser: user.uid, fromName: userData.displayName, avatar: userData.photoURL, createdAt: new Date().toISOString()
                 });
+                
+                onOpenChat(chatId, otherUser); // Abrir el chat inmediatamente
             };
 
             return (
@@ -1836,7 +1837,8 @@
                         requests.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes solicitudes</div> :
                         requests.map(req => {
                             const senderUid = req.participants.find(uid => uid !== user.uid);
-                            const senderName = req.participantsData?.[senderUid]?.displayName || "Usuario";
+                            const senderUser = allUsers[senderUid];
+                            const senderName = senderUser?.displayName || "Usuario";
                             return (
                                 <div key={req.id} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800">
                                     <div className="flex-1">
@@ -2072,13 +2074,16 @@
             const sendFile = async (selectedFile = file) => {
                 if (!user?.uid || !selectedFile) return; // FIX: Asegurar que el UID existe
                 
-                const fileExtension = selectedFile.name.split('.').pop().toLowerCase();
+                // FIX: Comprobación de seguridad para selectedFile.name
+                const fileName = selectedFile.name || "file.bin";
+                const fileExtension = fileName.split('.').pop().toLowerCase();
+                
                 let fileType = 'file'; 
                 if (['png', 'jpg', 'jpeg', 'gif'].includes(fileExtension)) fileType = 'image';
                 else if (['mp3', 'wav', 'ogg', 'webm'].includes(fileExtension)) fileType = 'audio';
                 
                 // Eliminado setTxt para evitar el mensaje de subida
-                const path = `chats/${chatId}/${Date.now()}_${selectedFile.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
+                const path = `chats/${chatId}/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9.]/g,'')}`;
                 
                 try {
                     const url = await uploadToGitHub(selectedFile, path, (s) => console.log(s));
@@ -2141,13 +2146,14 @@
                     e.preventDefault(); // Previene el salto de línea por defecto
                     if (file) {
                         sendFile();
-                    } else {
+                    } else if (txt.trim()) {
                         sendTextOrAudio();
                     }
                 }
             };
 
-            const isSendButtonVisible = txt.trim().length > 0 || !!file || isRecording;
+            // FIX: Lógica de visibilidad del botón de envío
+            const isSendButtonVisible = !!file || txt.trim().length > 0;
 
             return (
                 <div className="absolute inset-0 z-50 bg-gray-900 flex flex-col animate-in slide-in-from-right h-[100dvh]">
