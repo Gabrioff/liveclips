@@ -5,17 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>LiveClips</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Importante: Cargamos Babel para traducir React en el navegador -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <style>
-        /* Estilos globales y correcciones para móvil */
-        body { background-color: #000; color: white; overflow: hidden; }
+        /* Estilos críticos para móvil */
+        body { 
+            background-color: #000; 
+            color: white; 
+            overflow: hidden; 
+            /* Prevenir rebote en iOS */
+            overscroll-behavior: none;
+        }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .animate-spin-slow { animation: spin 4s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .filter-red { filter: invert(27%) sepia(51%) saturate(2878%) hue-rotate(346deg) brightness(104%) contrast(97%); }
+        
+        /* Animación de Notificación Toast */
+        @keyframes slideDown {
+            from { transform: translateY(-100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-slide-down { animation: slideDown 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        
+        /* Ajuste para videos en grid */
+        video { object-fit: cover; }
     </style>
 </head>
 <body>
@@ -40,7 +55,6 @@
             updateDoc, increment, query, orderBy, deleteDoc, where, limit, serverTimestamp
         } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // --- CONFIGURACIÓN FIREBASE ---
         const firebaseConfig = {
             apiKey: "AIzaSyCqOTWcQ4uOC851_-j4JBUcENkCa-9xWdE",
             authDomain: "liveclips-93af8.firebaseapp.com",
@@ -56,7 +70,6 @@
         const db = getFirestore(app);
         const appId = 'tiktok-glass-universal';
 
-        // --- TUS ICONOS ORIGINALES ---
         const ICONS = {
             bandeja: "https://img.icons8.com/?size=100&id=JKQ8C03mfHVD&format=png&color=000000",
             perfil: "https://img.icons8.com/?size=100&id=AaFA8C8mpiZY&format=png&color=000000",
@@ -92,7 +105,36 @@
 
         const getChatId = (uid1, uid2) => [uid1, uid2].sort().join('_');
 
-        // --- COMPONENTES ---
+        // --- COMPONENTE NOTIFICACIÓN TOAST ---
+        const ToastNotification = ({ notif, onClose }) => {
+            useEffect(() => {
+                const timer = setTimeout(onClose, 4000);
+                return () => clearTimeout(timer);
+            }, []);
+
+            if (!notif) return null;
+
+            return (
+                <div className="fixed top-4 left-4 right-4 z-[100] animate-slide-down">
+                    <div className="bg-gray-800/90 backdrop-blur-md border border-gray-700 p-3 rounded-2xl shadow-2xl flex items-center gap-3" onClick={onClose}>
+                        <div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden flex-shrink-0 border border-gray-600">
+                            <img src={notif.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${notif.fromUser}`} className="w-full h-full object-cover" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-white truncate">{notif.fromName}</p>
+                            <p className="text-xs text-gray-300 truncate">
+                                {notif.type === 'message' ? 'Te envió un mensaje' : 
+                                 notif.type === 'like' ? 'Le gustó tu video' : 
+                                 notif.type === 'follow' ? 'Comenzó a seguirte' : 'Nueva notificación'}
+                            </p>
+                        </div>
+                        <div className="w-2 h-2 bg-cyan-400 rounded-full"></div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- COMPONENTES DE LA APP ---
 
         const AuthScreen = () => {
             const [isRegistering, setIsRegistering] = useState(false);
@@ -296,6 +338,11 @@
                     await setDoc(myRef, { since: new Date().toISOString() });
                     await updateDoc(targetPublicRef, { "stats.followers": increment(1) });
                     await updateDoc(myPublicRef, { "stats.following": increment(1) });
+                    // Notificación al seguir
+                    await addDoc(collection(db, 'artifacts', appId, 'users', targetUserId, 'notifications'), {
+                        type: 'follow', fromUser: currentUser.uid, fromName: currentUser.displayName || "Usuario",
+                        avatar: currentUser.photoURL || "", createdAt: new Date().toISOString()
+                    });
                 }
             };
 
@@ -348,7 +395,8 @@
                     <div className="grid grid-cols-3 gap-0.5">
                         {userVideos.map((video, idx) => (
                             <div key={video.id} onClick={() => onVideoClick(video.id)} className="relative aspect-[3/4] bg-gray-800 cursor-pointer overflow-hidden">
-                            <video src={video.url} className="w-full h-full object-cover opacity-90 hover:opacity-100 transition" />
+                            {/* Miniatura truco: video pausado sin controles */}
+                            <video src={video.url + '#t=0.1'} className="w-full h-full object-cover opacity-90 hover:opacity-100 transition" preload="metadata" />
                             <div className="absolute bottom-1 left-1 flex items-center gap-1 text-[10px] text-white font-bold drop-shadow-md">
                                 <Play size={10} fill="white"/> {video.likes || 0}
                             </div>
@@ -456,7 +504,7 @@
                 <div className="grid grid-cols-2 gap-2">
                     {filteredVideos.map(video => (
                     <div key={video.id} onClick={() => onVideoClick(video)} className="relative aspect-[9/16] bg-gray-800 rounded-xl overflow-hidden cursor-pointer group shadow-lg border border-gray-800">
-                        <video src={video.url} className="w-full h-full object-cover opacity-80" muted />
+                        <video src={video.url + '#t=0.1'} className="w-full h-full object-cover opacity-80" muted preload="metadata" />
                         <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
                             <p className="text-xs font-bold text-white truncate">@{video.authorName}</p>
                         </div>
@@ -467,7 +515,7 @@
             );
         };
 
-        const InboxView = ({ user, onRequestChat, onOpenChat }) => {
+        const InboxView = ({ user, onRequestChat, onOpenChat, notifications }) => {
             const [chats, setChats] = useState([]);
             const [tab, setTab] = useState('chats'); 
 
@@ -501,9 +549,14 @@
                         myChats.map(chat => {
                             const otherUid = chat.participants.find(uid => uid !== user.uid);
                             const otherName = chat.participantsData?.[otherUid]?.displayName || "Usuario";
+                            // Fallback para obtener la imagen de los participantes si está en la data
+                            const otherImg = `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`; 
+                            
                             return (
                                 <div key={chat.id} onClick={() => onOpenChat(chat.id)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800">
-                                    <div className="w-12 h-12 rounded-full bg-gray-700 flex items-center justify-center text-white font-bold text-lg uppercase">{otherName[0]}</div>
+                                    <div className="w-12 h-12 rounded-full bg-gray-700 overflow-hidden border border-gray-600">
+                                        <img src={otherImg} className="w-full h-full object-cover"/>
+                                    </div>
                                     <div className="flex-1">
                                         <p className="font-bold text-white">{otherName}</p>
                                         <p className="text-xs text-gray-400">Toca para chatear</p>
@@ -545,9 +598,29 @@
 
             const send = async () => {
                 if(!txt.trim()) return;
+                
+                // Enviar mensaje
                 await addDoc(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), {
                     text: txt, senderId: user.uid, createdAt: new Date().toISOString()
                 });
+                
+                // Encontrar al otro usuario para notificarle
+                const chatDoc = await getDoc(doc(db, 'artifacts', appId, 'chats', chatId));
+                const participants = chatDoc.data().participants;
+                const receiverId = participants.find(id => id !== user.uid);
+                
+                // Crear notificación
+                if (receiverId) {
+                    const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
+                    await addDoc(collection(db, 'artifacts', appId, 'users', receiverId, 'notifications'), {
+                        type: 'message', 
+                        fromUser: user.uid, 
+                        fromName: userData.displayName || "Usuario", 
+                        avatar: userData.photoURL || "", 
+                        createdAt: new Date().toISOString()
+                    });
+                }
+
                 setTxt("");
             };
 
@@ -588,14 +661,40 @@
             const [activeChatId, setActiveChatId] = useState(null);
             const [feedMode, setFeedMode] = useState('global');
             const [profileFeedVideos, setProfileFeedVideos] = useState([]);
+            const [notifications, setNotifications] = useState([]);
+            const [latestToast, setLatestToast] = useState(null); // Para el Toast
+            
             const feedRef = useRef(null);
 
             useEffect(() => onAuthStateChanged(auth, setUser), []);
 
+            // Listener de videos
             useEffect(() => {
                 if(!user) return;
                 const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), orderBy('createdAt', 'desc'));
                 return onSnapshot(q, s => setVideos(s.docs.map(d => ({id: d.id, ...d.data()}))));
+            }, [user]);
+
+            // Listener de notificaciones globales
+            useEffect(() => {
+                if (!user) return;
+                const q = query(collection(db, 'artifacts', appId, 'users', user.uid, 'notifications'), orderBy('createdAt', 'desc'), limit(10));
+                const unsub = onSnapshot(q, (snapshot) => {
+                    const notifs = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
+                    
+                    // Si hay una notificación nueva (creada hace menos de 5 segundos), mostrar Toast
+                    if (notifs.length > 0) {
+                        const newest = notifs[0];
+                        const now = new Date().getTime();
+                        const notifTime = new Date(newest.createdAt).getTime();
+                        // Si es reciente (menos de 10s) y es diferente a la anterior mostrada
+                        if (now - notifTime < 10000) {
+                            setLatestToast(newest);
+                        }
+                    }
+                    setNotifications(notifs);
+                });
+                return () => unsub();
             }, [user]);
 
             const handleScroll = () => {
@@ -607,6 +706,12 @@
 
             const toggleLike = async (video) => {
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), { likes: increment(1) });
+                if(video.authorId !== user.uid) {
+                    const uData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
+                    await addDoc(collection(db, 'artifacts', appId, 'users', video.authorId, 'notifications'), {
+                        type: 'like', fromUser: user.uid, fromName: uData.displayName, avatar: uData.photoURL, thumbnail: video.url, createdAt: new Date().toISOString()
+                    });
+                }
             };
 
             const goToProfile = (uid) => {
@@ -667,7 +772,9 @@
             if(!user) return <AuthScreen />;
 
             return (
-                <div className="flex justify-center bg-black h-screen w-full font-sans text-white select-none">
+                <div className="flex justify-center bg-black h-[100dvh] w-full font-sans text-white select-none">
+                <ToastNotification notif={latestToast} onClose={() => setLatestToast(null)} />
+                
                 <div className="relative w-full max-w-md h-full bg-gray-900 shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col border-x border-gray-800 overflow-hidden">
                     
                     {activeTab === 'home' && (
@@ -713,10 +820,10 @@
                     )}
 
                     {activeTab === 'inbox' && (
-                        <InboxView user={user} onOpenChat={setActiveChatId} />
+                        <InboxView user={user} onOpenChat={setActiveChatId} notifications={notifications} />
                     )}
 
-                    <div className="bg-gray-900/95 border-t border-gray-500 p-2 flex justify-around items-center z-40 pb-5 backdrop-blur-xl">
+                    <div className="bg-gray-900/95 border-t border-gray-500 p-2 flex justify-around items-center z-40 pb-5 backdrop-blur-xl h-[80px]">
                         <button onClick={goHome} className={`flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-100`}>
                             <Home size={26} strokeWidth={activeTab==='home'?3:2} className="text-white fill-white"/><span className="text-[10px] font-medium text-white">Inicio</span>
                         </button>
@@ -731,8 +838,12 @@
                             </div>
                         </button>
 
-                        <button onClick={()=>setActiveTab('inbox')} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
-                            <img src={ICONS.bandeja} className="w-7 h-7 invert"/><span className="text-[10px] font-medium text-white">Bandeja</span>
+                        <button onClick={()=>setActiveTab('inbox')} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100 relative">
+                            <img src={ICONS.bandeja} className="w-7 h-7 invert"/>
+                            <span className="text-[10px] font-medium text-white">Bandeja</span>
+                            {notifications.some(n => new Date().getTime() - new Date(n.createdAt).getTime() < 86400000) && (
+                                <span className="absolute top-0 right-3 w-2.5 h-2.5 bg-red-500 rounded-full border border-black"></span>
+                            )}
                         </button>
                         <button onClick={()=>{setViewingProfile(null); setActiveTab('profile')}} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
                             <img src={ICONS.perfil} className="w-7 h-7 invert"/><span className="text-[10px] font-medium text-white">Perfil</span>
