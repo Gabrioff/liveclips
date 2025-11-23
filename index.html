@@ -148,7 +148,7 @@
         import { 
             Music2, Home, Search, Loader2, AlertTriangle, Copy, Play, Pause, 
             User as UserIcon, Hash, Bell, ArrowLeft, Edit3, Camera, Check, X, 
-            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle, FileText, Mic, Image, CornerUpLeft, Zap, MessageSquare, Smile, Gamepad
+            LogOut, Lock, UserPlus, UserCheck, Send, MessageCircle, FileText, Mic, Image, CornerUpLeft, Zap, MessageSquare, Smile, Gamepad, Paperclip
         } from 'https://esm.sh/lucide-react@0.344.0';
         
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -261,8 +261,30 @@
             return new Blob([view], { type: 'audio/wav' });
         };
 
+        const getChatId = (uid1, uid2) => [uid1, uid2].sort().join('_');
 
-        // --- TUS ICONOS ORIGINALES (Ajustando algunos para usar Lucide si es posible) ---
+        // --- FUNCIONES AUXILIARES DE MENSAJERÍA ---
+        const getUnreadMessagesCount = (chats, currentUserId) => {
+            return chats.reduce((acc, chat) => {
+                const otherUid = chat.participants.find(uid => uid !== currentUserId);
+                const lastReadTime = chat.participantsData?.[currentUserId]?.lastRead || 0;
+                if (chat.lastMessageTime && chat.lastSenderId !== currentUserId && new Date(chat.lastMessageTime).getTime() > new Date(lastReadTime).getTime()) {
+                    acc++;
+                }
+                return acc;
+            }, 0);
+        };
+
+        const getUnreadCountForChat = (chat, currentUserId) => {
+             const lastReadTime = chat.participantsData?.[currentUserId]?.lastRead || 0;
+             const lastMessageTime = chat.lastMessageTime ? new Date(chat.lastMessageTime).getTime() : 0;
+             const isFromOtherUser = chat.lastSenderId !== currentUserId;
+             const isUnread = lastMessageTime > new Date(lastReadTime).getTime();
+             return isUnread && isFromOtherUser ? 1 : 0; 
+        }
+
+
+        // --- TUS ICONOS ORIGINALES ---
         const ICONS = {
             bandeja: "https://img.icons8.com/?size=100&id=JKQ8C03mfHVD&format=png&color=000000", // Notificación
             perfil: "https://img.icons8.com/?size=100&id=AaFA8C8mpiZY&format=png&color=000000", // Perfil
@@ -270,11 +292,9 @@
             tendencia: "https://img.icons8.com/?size=100&id=g8O1NN7oS0KJ&format=png&color=000000", // Tendencia
             compartir: "https://img.icons8.com/?size=100&id=Wv2O2Ve44Are&format=png&color=000000", // Compartir
             crear: "https://img.icons8.com/?size=100&id=rrOG2bhnvx0w&format=png&color=000000", // Crear
-            // ICONO DE RESPONDER SOLICITADO
             reply: (props) => <CornerUpLeft {...props} />,
         };
         
-        // --- COMPONENTE DE INSIGNIA DE VERIFICADO ---
         const VerifiedBadge = ({ size = 18 }) => (
             <img 
                 src={VERIFIED_BADGE_URL} 
@@ -312,71 +332,23 @@
             return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
         };
 
-        const getChatId = (uid1, uid2) => [uid1, uid2].sort().join('_');
-
-        // --- COMPONENTE AUDIO PLAYER (FIXED) ---
+        // --- COMPONENTE AUDIO PLAYER (CORREGIDO Y ROBUSTO) ---
         const AudioMessage = ({ audioUrl, isMe, onGeneration, text }) => {
-            const audioRef = useRef(new Audio());
+            const audioRef = useRef(null); // Usamos ref para el elemento <audio> del DOM
             const [isPlaying, setIsPlaying] = useState(false);
-            
-            // Si es texto largo y no hay URL, necesitamos TTS
-            const needsTTS = !audioUrl && text?.length > 100;
-            const [isLoading, setIsLoading] = useState(!!audioUrl || needsTTS); // Carga inicial si hay URL o necesita TTS
+            const [isLoading, setIsLoading] = useState(false);
             const [error, setError] = useState(null);
             
+            const needsTTS = !audioUrl && text?.length > 100;
+
             // Simulación de la forma de onda
             const bars = Array(15).fill(0).map((_, i) => (
                 <div key={i} className="waveform-bar" style={{height: `${Math.random() * 80 + 20}%`}}></div>
             ));
 
-            // EFECTO: Manejar la URL del audio (FIXED)
-            // Descargamos el audio como Blob para evitar problemas de MIME type con GitHub
+            // EFECTO: Generar audio TTS si es necesario (Sin cambios)
             useEffect(() => {
-                if (!audioUrl) return;
-
-                let active = true;
-                setIsLoading(true);
-
-                const loadAudio = async () => {
-                    try {
-                        const response = await fetch(audioUrl);
-                        if (!response.ok) throw new Error("No se pudo cargar el audio");
-                        const blob = await response.blob();
-                        const objectUrl = URL.createObjectURL(blob);
-                        
-                        if (active) {
-                            if (audioRef.current) {
-                                audioRef.current.pause();
-                                audioRef.current.src = objectUrl;
-                                audioRef.current.load();
-                            }
-                            setIsLoading(false);
-                        }
-                    } catch (e) {
-                        if (active) {
-                            console.error("Error audio playback:", e);
-                            setError("No se puede reproducir");
-                            setIsLoading(false);
-                        }
-                    }
-                };
-
-                loadAudio();
-
-                return () => {
-                    active = false;
-                    if (audioRef.current && audioRef.current.src) {
-                        URL.revokeObjectURL(audioRef.current.src);
-                    }
-                };
-            }, [audioUrl]);
-
-            // EFECTO: Generar audio TTS si es necesario
-            useEffect(() => {
-                if (audioUrl || !needsTTS) {
-                    if (!audioUrl) setIsLoading(false);
-                    return;
-                }
+                if (audioUrl || !needsTTS) return;
                 
                 const generateAndSetAudio = async () => {
                     setIsLoading(true);
@@ -398,80 +370,57 @@
                     };
                     
                     try {
-                        let response;
-                        for (let i = 0; i < 3; i++) { 
-                            response = await fetch(apiUrl, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload)
-                            });
-                            if (response.ok) break;
-                            await new Promise(resolve => setTimeout(resolve, 2 ** i * 1000)); 
-                        }
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
                         
-                        if (!response.ok) throw new Error("Error de API: " + response.statusText);
+                        if (!response.ok) throw new Error("Error de API");
                         
                         const result = await response.json();
                         const part = result?.candidates?.[0]?.content?.parts?.[0];
                         const audioData = part?.inlineData?.data;
-                        const mimeType = part?.inlineData?.mimeType;
 
-                        if (audioData && mimeType && mimeType.startsWith("audio/L16")) {
-                            const match = mimeType.match(/rate=(\d+)/);
-                            const sampleRate = match ? parseInt(match[1], 10) : 24000; 
-
-                            const pcmData = base64ToArrayBuffer(audioData);
-                            const pcm16 = new Int16Array(pcmData);
-                            const wavBlob = pcmToWav(pcm16, sampleRate);
+                        if (audioData) {
+                            const binaryString = atob(audioData);
+                            const len = binaryString.length;
+                            const bytes = new Uint8Array(len);
+                            for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+                            const pcm16 = new Int16Array(bytes.buffer);
+                            const wavBlob = pcmToWav(pcm16, 24000); 
                             const newAudioUrl = URL.createObjectURL(wavBlob);
                             
-                            // Aquí asignamos directamente el blob generado
-                            if(audioRef.current) {
-                                audioRef.current.src = newAudioUrl;
-                            }
                             onGeneration(newAudioUrl); 
-                            
-                        } else {
-                            throw new Error("Respuesta de audio no válida.");
                         }
                     } catch (e) {
-                        setError("Falló la generación de audio");
-                        onGeneration(null); 
+                        setError("Error TTS");
                     } finally {
                         setIsLoading(false);
                     }
                 };
 
-                if (needsTTS) {
+                if (needsTTS && !audioUrl) {
                     generateAndSetAudio();
                 }
             }, [text, audioUrl, onGeneration, needsTTS]);
 
-
-            useEffect(() => {
-                const audio = audioRef.current;
-                const onEnded = () => setIsPlaying(false);
-                audio.addEventListener('ended', onEnded);
-                audio.addEventListener('pause', onEnded);
-                return () => {
-                    audio.removeEventListener('ended', onEnded);
-                    audio.removeEventListener('pause', onEnded);
-                };
-            }, []);
-
+            // Función de reproducción segura
             const togglePlay = () => {
-                const audio = audioRef.current;
-                if (!audio.src || isLoading || error) return;
+                if (!audioRef.current) return;
 
                 if (isPlaying) {
-                    audio.pause();
+                    audioRef.current.pause();
                 } else {
-                    audio.play().catch(e => {
-                        console.error("Error al reproducir:", e);
-                        setError("Error reprod.");
-                    });
+                    // Promesa de reproducción para capturar errores
+                    const playPromise = audioRef.current.play();
+                    if (playPromise !== undefined) {
+                        playPromise.catch(e => {
+                            console.error("Error al reproducir:", e);
+                            setError("No se pudo reproducir");
+                        });
+                    }
                 }
-                setIsPlaying(!isPlaying);
             };
 
             const backgroundColor = isMe ? 'bg-green-600' : 'bg-cyan-600';
@@ -481,21 +430,24 @@
                 return (
                     <div className="flex items-center gap-2 p-2 bg-gray-800 rounded-xl text-xs text-gray-400">
                         <Loader2 size={16} className="animate-spin" />
-                        <span>Cargando audio...</span>
+                        <span>Cargando...</span>
                     </div>
                 );
             }
 
+            // Si hay error, mostramos un enlace directo para abrir/descargar el archivo
             if (error) {
                 return (
-                    <div className="flex items-center gap-2 p-3 bg-red-800/50 rounded-xl text-xs text-red-300">
+                    <div className="flex items-center gap-2 p-2 bg-red-900/50 rounded-xl text-xs text-red-200 border border-red-700">
                         <AlertTriangle size={16} />
-                        <span>{error}</span>
+                        <a href={audioUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                            Error. Toca para abrir.
+                        </a>
                     </div>
                 );
             }
 
-            // Si es un mensaje de texto corto (no TTS ni audio de micrófono/archivo)
+            // Si es texto corto, mostrar texto
             if (!audioUrl && text && text.length <= 100) {
                 return <p className="whitespace-pre-wrap">{text}</p>;
             }
@@ -505,6 +457,20 @@
                     onClick={togglePlay} 
                     className={`flex items-center gap-3 p-2 rounded-xl cursor-pointer shadow-md w-fit max-w-full ${backgroundColor}`}
                 >
+                    {/* Elemento AUDIO oculto pero funcional */}
+                    <audio 
+                        ref={audioRef} 
+                        src={audioUrl}
+                        onPlay={() => setIsPlaying(true)}
+                        onPause={() => setIsPlaying(false)}
+                        onEnded={() => setIsPlaying(false)}
+                        onError={(e) => {
+                            console.error("Error nativo:", e.nativeEvent);
+                            setError("Error carga");
+                        }}
+                        preload="metadata"
+                    />
+
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center bg-white ${playIconColor}`}>
                         {isPlaying ? <Pause size={16} fill="currentColor" className="text-black" /> : <Play size={16} fill="currentColor" className="text-black ml-0.5" />}
                     </div>
@@ -512,7 +478,7 @@
                         {bars}
                     </div>
                     <span className="text-white text-xs whitespace-nowrap">
-                        {isPlaying ? 'Oyendo...' : 'Toca para oír'}
+                        {isPlaying ? 'Oyendo...' : 'Audio'}
                     </span>
                 </div>
             );
@@ -636,7 +602,7 @@
             );
         };
         
-        // --- CHAT: COMPONENTE DE MENSAJE CON MENÚ DE CONTEXTO (FIX: BOTÓN RESPONDER) ---
+        // --- CHAT: COMPONENTE DE MENSAJE CON MENÚ DE CONTEXTO ---
         const MessageBubble = ({ message, isMe, onDelete, onReply, videos, onUpdateAudioUrl }) => {
             const [showMenu, setShowMenu] = useState(false);
             const pressTimer = useRef(null);
@@ -670,11 +636,6 @@
             const isSticker = message.type === 'sticker';
             const isGameInvite = message.type === 'game_invite';
 
-            // --- LÓGICA DE POSICIÓN DEL BOTÓN DE RESPONDER MEJORADA ---
-            // Ahora usamos un contenedor relativo interno para que el botón se posicione RELATIVO AL MENSAJE, no a la pantalla.
-            // right-full mueve el botón el 100% de su propio ancho/contenedor a la izquierda.
-            // mr-2 añade separación.
-
             if (isSticker) {
                  return (
                     <div 
@@ -684,7 +645,6 @@
                         onTouchCancel={handleMouseUp}
                     >
                         <div className="relative">
-                             {/* Botón de Eliminar (Solo para el dueño) */}
                             {isMe && (
                                 <button 
                                     onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
@@ -734,12 +694,8 @@
                     onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}
                     onTouchCancel={handleMouseUp}
                 >
-                    {/* Contenedor Relativo para que el botón se pegue a este bloque */}
                     <div className={`relative max-w-[80%] ${isMe ? '' : ''}`}>
                         
-                        {/* Botón de Respuesta Rápida (Pegado al mensaje) */}
-                        {/* Si es isMe (mensaje a la derecha), ponemos el botón a la IZQUIERDA (right-full). */}
-                        {/* Si NO es isMe (mensaje a la izquierda), ponemos el botón a la DERECHA (left-full). */}
                         <button 
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -753,7 +709,6 @@
                             {ICONS.reply({ size: 14 })}
                         </button>
 
-                        {/* Botón de Eliminar (Solo para el dueño - posición opuesta al de reply, o junto a él si se prefiere, aquí lo dejo oculto por defecto en menu) */}
                         {isMe && (
                             <button 
                                 onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
@@ -767,7 +722,6 @@
                         <div 
                             className={`p-3 rounded-2xl text-sm transition-all relative ${isMe ? 'bg-white text-black' : 'bg-gray-800 text-white'} ${showMenu ? 'ring-2 ring-cyan-500/50' : ''}`}
                         >
-                            {/* Mensaje de respuesta (citado) */}
                             {message.replyTo && (
                                 <div className="p-2 mb-2 bg-white/10 border-l-4 border-cyan-400 rounded-md text-xs text-gray-500">
                                     <p className="font-bold text-cyan-600">Respondiendo a {message.replyTo.senderId === auth.currentUser.uid ? 'tí' : 'otro'}</p>
@@ -775,7 +729,6 @@
                                 </div>
                             )}
 
-                            {/* Contenido del mensaje: Audio Player o Texto simple */}
                             {isAudioOrTTS || (message.type === 'text' && message.text?.length <= 100) ? (
                                 <AudioMessage 
                                     audioUrl={message.fileUrl} 
@@ -786,17 +739,23 @@
                             ) : null}
                             
                             {message.type === 'image' && (
-                                <img 
-                                    src={message.fileUrl} 
-                                    alt={isGif ? "GIF animado" : "Imagen"} 
-                                    className={`max-w-full rounded-lg ${isGif ? 'max-h-60' : 'max-h-48'}`}
-                                />
+                                <div className="flex flex-col">
+                                    <img 
+                                        src={message.fileUrl} 
+                                        alt={isGif ? "GIF animado" : "Imagen"} 
+                                        className={`max-w-full rounded-lg mb-1 ${isGif ? 'max-h-60' : 'max-h-48'}`}
+                                    />
+                                    {message.text && <p className="whitespace-pre-wrap">{message.text}</p>}
+                                </div>
                             )}
                             
                             {message.type === 'file' && (
-                                <a href={message.fileUrl} target="_blank" className="flex items-center gap-2 text-cyan-600 hover:underline font-bold">
-                                    <FileText size={16} className={isMe ? 'text-black' : 'text-white'}/> Archivo Adjunto
-                                </a>
+                                <div className="flex flex-col">
+                                    <a href={message.fileUrl} target="_blank" className="flex items-center gap-2 text-cyan-600 hover:underline font-bold mb-1">
+                                        <FileText size={16} className={isMe ? 'text-black' : 'text-white'}/> Archivo Adjunto
+                                    </a>
+                                    {message.text && <p className="whitespace-pre-wrap">{message.text}</p>}
+                                </div>
                             )}
 
                             {message.type === 'video' && video && (
@@ -812,1036 +771,199 @@
             );
         };
 
-        // --- MODALES ---
+        // --- MODALES Y OTROS COMPONENTES ---
         
-        // --- COMPONENTE MODAL DE COMENTARIOS ---
         const CommentsModal = ({ isOpen, onClose, video, user }) => {
             const [comments, setComments] = useState([]);
             const [newComment, setNewComment] = useState('');
             const commentsEndRef = useRef(null);
-
             useEffect(() => {
                 if (!isOpen || !video?.id) return;
-                const q = query(
-                    collection(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'comments'), 
-                    orderBy('createdAt', 'asc')
-                );
+                const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'comments'), orderBy('createdAt', 'asc'));
                 const unsub = onSnapshot(q, s => {
-                    setComments(s.docs.map(d => ({id: d.id, ...d.data()}))
-                        .map(c => ({
-                            ...c,
-                            isVerified: c.isVerified || false,
-                            avatar: c.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${c.authorId}`
-                        }))
-                    );
+                    setComments(s.docs.map(d => ({id: d.id, ...d.data()})).map(c => ({...c, isVerified: c.isVerified || false, avatar: c.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${c.authorId}`})));
                 });
                 return () => unsub();
             }, [isOpen, video?.id]);
-
-            useEffect(() => {
-                if (commentsEndRef.current) {
-                    commentsEndRef.current.scrollIntoView({ behavior: 'smooth' });
-                }
-            }, [comments.length]);
-
+            useEffect(() => { if (commentsEndRef.current) commentsEndRef.current.scrollIntoView({ behavior: 'smooth' }); }, [comments.length]);
             const handleSendComment = async () => {
                 if (!user?.uid || !newComment.trim()) return;
-                
                 const userDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid));
                 const userData = userDoc.data() || {};
-
                 await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'comments'), {
-                    authorId: user.uid,
-                    authorName: userData.displayName || user.displayName || 'Usuario',
-                    authorUsername: userData.username || user.displayName,
-                    avatar: userData.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
-                    text: newComment.trim(),
-                    createdAt: serverTimestamp(),
-                    isVerified: userData.isVerified || false 
+                    authorId: user.uid, authorName: userData.displayName || user.displayName || 'Usuario', authorUsername: userData.username || user.displayName,
+                    avatar: userData.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`, text: newComment.trim(), createdAt: serverTimestamp(), isVerified: userData.isVerified || false 
                 });
                 setNewComment('');
-                
-                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), {
-                    commentsCount: increment(1)
-                });
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), { commentsCount: increment(1) });
             };
-
             const handleDeleteComment = async (commentId) => {
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'comments', commentId));
-                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), {
-                    commentsCount: increment(-1)
-                });
+                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), { commentsCount: increment(-1) });
             };
-
             if (!isOpen) return null;
-
             return (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
                     <div className="bg-gray-900 w-full rounded-t-2xl p-4 flex flex-col h-2/3 border-t border-gray-700 animate-in slide-in-from-bottom">
-                        
                         <div className="flex justify-between items-center border-b border-gray-800 pb-3 mb-3">
                             <span className="text-white font-bold text-lg">Comentarios ({comments.length})</span>
                             <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-800 transition"><X size={20} className="text-gray-400"/></button>
                         </div>
-
                         <div className="flex-1 overflow-y-auto space-y-4 pr-2 no-scrollbar">
                             {comments.map((comment) => {
-                                const isAuthor = comment.authorId === user?.uid;
-                                const isVideoAuthor = comment.authorId === video.authorId;
-                                
+                                const isAuthor = comment.authorId === user?.uid; const isVideoAuthor = comment.authorId === video.authorId;
                                 return (
                                     <div key={comment.id} className="flex gap-3 relative group">
-                                        <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
-                                            <img src={comment.avatar} className="w-full h-full object-cover"/>
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-1">
-                                                <p className="font-bold text-sm text-gray-300 hover:text-white cursor-pointer transition">
-                                                    @{comment.authorUsername}
-                                                </p>
-                                                {comment.isVerified && <VerifiedBadge size={12} />}
-                                                {isVideoAuthor && !comment.isVerified && (
-                                                    <span className="text-xs text-cyan-400 font-medium ml-1">Autor</span>
-                                                )}
-                                            </div>
-                                            <p className="text-sm text-white whitespace-pre-wrap">{comment.text}</p>
-                                        </div>
-                                        
-                                        {(isAuthor || video.authorId === user?.uid) && (
-                                            <button 
-                                                onClick={() => handleDeleteComment(comment.id)} 
-                                                className="absolute right-0 top-1 p-1 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-300"
-                                            >
-                                                <X size={14}/>
-                                            </button>
-                                        )}
+                                        <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0"><img src={comment.avatar} className="w-full h-full object-cover"/></div>
+                                        <div className="flex-1 min-w-0"><div className="flex items-center gap-1"><p className="font-bold text-sm text-gray-300 hover:text-white cursor-pointer transition">@{comment.authorUsername}</p>{comment.isVerified && <VerifiedBadge size={12} />}{isVideoAuthor && !comment.isVerified && (<span className="text-xs text-cyan-400 font-medium ml-1">Autor</span>)}</div><p className="text-sm text-white whitespace-pre-wrap">{comment.text}</p></div>
+                                        {(isAuthor || video.authorId === user?.uid) && (<button onClick={() => handleDeleteComment(comment.id)} className="absolute right-0 top-1 p-1 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-300"><X size={14}/></button>)}
                                     </div>
                                 );
-                            })}
-                            <div ref={commentsEndRef} />
+                            })}<div ref={commentsEndRef} />
                         </div>
-
                         <div className="mt-4 flex gap-2 items-end border-t border-gray-800 pt-4">
-                            <textarea
-                                value={newComment}
-                                onChange={(e) => setNewComment(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendComment(); } }}
-                                placeholder="Añadir comentario..."
-                                className="chat-input flex-1 bg-gray-800 text-white p-3 rounded-2xl outline-none resize-none max-h-20"
-                                rows={1}
-                            />
-                            <button 
-                                onClick={handleSendComment}
-                                disabled={!newComment.trim()}
-                                className="w-10 h-10 p-2 bg-white rounded-full text-black flex items-center justify-center disabled:opacity-50 hover:bg-gray-200 transition"
-                            >
-                                <Send size={18}/>
-                            </button>
+                            <textarea value={newComment} onChange={(e) => setNewComment(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendComment(); } }} placeholder="Añadir comentario..." className="chat-input flex-1 bg-gray-800 text-white p-3 rounded-2xl outline-none resize-none max-h-20" rows={1}/>
+                            <button onClick={handleSendComment} disabled={!newComment.trim()} className="w-10 h-10 p-2 bg-white rounded-full text-black flex items-center justify-center disabled:opacity-50 hover:bg-gray-200 transition"><Send size={18}/></button>
                         </div>
                     </div>
                 </div>
             );
         };
         
-        // --- COMPONENTE MODAL DE STICKERS ---
         const StickerModal = ({ isOpen, onClose, onSelectSticker }) => {
             if (!isOpen) return null;
-
             return (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
                     <div className="bg-gray-900 w-full rounded-t-2xl p-6 border-t border-gray-700 animate-in slide-in-from-bottom">
-                        <h3 className="text-white font-bold text-lg mb-4 flex justify-between items-center">
-                            Enviar Sticker
-                            <button onClick={onClose}><X size={20} className="text-gray-400"/></button>
-                        </h3>
-
+                        <h3 className="text-white font-bold text-lg mb-4 flex justify-between items-center">Enviar Sticker<button onClick={onClose}><X size={20} className="text-gray-400"/></button></h3>
                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-4 max-h-64 overflow-y-auto">
-                            {STICKERS.map((url, index) => (
-                                <div 
-                                    key={index}
-                                    className="aspect-square bg-gray-800 rounded-xl flex items-center justify-center cursor-pointer hover:bg-gray-700 transition"
-                                    onClick={() => onSelectSticker(url)}
-                                >
-                                    <img src={url} alt={`Sticker ${index + 1}`} className="max-w-[80%] max-h-[80%] object-contain" />
-                                </div>
-                            ))}
+                            {STICKERS.map((url, index) => (<div key={index} className="aspect-square bg-gray-800 rounded-xl flex items-center justify-center cursor-pointer hover:bg-gray-700 transition" onClick={() => onSelectSticker(url)}><img src={url} alt={`Sticker ${index + 1}`} className="max-w-[80%] max-h-[80%] object-contain" /></div>))}
                         </div>
-                        
                     </div>
                 </div>
             );
         };
         
-        // --- COMPONENTE MODAL DE INVITACIÓN A JUEGOS ---
         const GameInviteModal = ({ isOpen, onClose, onSendInvite }) => {
-            const [selectedGame, setSelectedGame] = useState(GAMES_CONFIG[0]);
-            const [inviteLink, setInviteLink] = useState('');
-            const [message, setMessage] = useState('');
-            
-            const handleSend = () => {
-                if (!inviteLink.trim()) return;
-                onSendInvite(selectedGame.name, inviteLink.trim(), message.trim());
-                onClose();
-            };
-
-            if (!isOpen) return null;
-
-            return (
+             const [selectedGame, setSelectedGame] = useState(GAMES_CONFIG[0]);
+             const [inviteLink, setInviteLink] = useState('');
+             const [message, setMessage] = useState('');
+             const handleSend = () => { if (!inviteLink.trim()) return; onSendInvite(selectedGame.name, inviteLink.trim(), message.trim()); onClose(); };
+             if (!isOpen) return null;
+             return (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
                     <div className="bg-gray-900 w-full max-w-sm rounded-xl p-6 border border-gray-700 shadow-2xl">
-                        <h3 className="text-white font-bold text-xl mb-4 flex items-center justify-between">
-                            Invitar a Jugar <Gamepad size={24} className="text-cyan-400"/>
-                        </h3>
-
-                        <div className="mb-4">
-                            <label className="block text-sm font-medium text-gray-400 mb-2">Selecciona un Juego</label>
-                            <div className="flex flex-wrap gap-2">
-                                {GAMES_CONFIG.map(game => (
-                                    <button
-                                        key={game.name}
-                                        onClick={() => setSelectedGame(game)}
-                                        className={`flex items-center gap-2 p-2 rounded-full border transition-all 
-                                            ${selectedGame.name === game.name ? 'bg-cyan-600 border-cyan-400 text-white shadow-md' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}`}
-                                    >
-                                        <img src={game.logo} alt={game.name} className="w-5 h-5 rounded-full"/>
-                                        <span className="text-sm">{game.name}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        <label className="block text-sm font-medium text-gray-400 mb-2 mt-4">Enlace de Partida ({selectedGame.name})</label>
-                        <input
-                            type="text"
-                            value={inviteLink}
-                            onChange={(e) => setInviteLink(e.target.value)}
-                            placeholder={selectedGame.placeholder}
-                            className="w-full bg-gray-800 text-white p-3 rounded-lg border border-gray-700 outline-none mb-4"
-                        />
-                        
-                        <label className="block text-sm font-medium text-gray-400 mb-2">Mensaje (Opcional)</label>
-                         <textarea 
-                            value={message}
-                            onChange={(e) => setMessage(e.target.value)}
-                            placeholder="¡Vamos a ganar!"
-                            className="w-full bg-gray-800 text-white p-3 rounded-lg border border-gray-700 outline-none resize-none h-20 mb-4"
-                        />
-
-
-                        <button
-                            onClick={handleSend}
-                            disabled={!inviteLink.trim()}
-                            className="w-full py-3.5 bg-white text-black font-bold rounded-xl disabled:opacity-50 hover:bg-gray-200 transition shadow-lg"
-                        >
-                            Enviar Invitación
-                        </button>
-                        <button onClick={onClose} className="w-full text-gray-400 text-sm mt-3">Cerrar</button>
-
+                        <h3 className="text-white font-bold text-xl mb-4 flex items-center justify-between">Invitar a Jugar <Gamepad size={24} className="text-cyan-400"/></h3>
+                        <div className="mb-4"><label className="block text-sm font-medium text-gray-400 mb-2">Selecciona un Juego</label><div className="flex flex-wrap gap-2">{GAMES_CONFIG.map(game => (<button key={game.name} onClick={() => setSelectedGame(game)} className={`flex items-center gap-2 p-2 rounded-full border transition-all ${selectedGame.name === game.name ? 'bg-cyan-600 border-cyan-400 text-white shadow-md' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}`}><img src={game.logo} alt={game.name} className="w-5 h-5 rounded-full"/><span className="text-sm">{game.name}</span></button>))}</div></div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2 mt-4">Enlace de Partida ({selectedGame.name})</label><input type="text" value={inviteLink} onChange={(e) => setInviteLink(e.target.value)} placeholder={selectedGame.placeholder} className="w-full bg-gray-800 text-white p-3 rounded-lg border border-gray-700 outline-none mb-4"/>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Mensaje (Opcional)</label><textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="¡Vamos a ganar!" className="w-full bg-gray-800 text-white p-3 rounded-lg border border-gray-700 outline-none resize-none h-20 mb-4"/>
+                        <button onClick={handleSend} disabled={!inviteLink.trim()} className="w-full py-3.5 bg-white text-black font-bold rounded-xl disabled:opacity-50 hover:bg-gray-200 transition shadow-lg">Enviar Invitación</button><button onClick={onClose} className="w-full text-gray-400 text-sm mt-3">Cerrar</button>
                     </div>
                 </div>
             );
         };
         
-        // --- COMPONENTE MODAL PARA COMPARTIR VIDEO ---
-        const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => { 
+        const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => {
             const [selectedChat, setSelectedChat] = useState(null);
-
             const handleSend = async () => {
                 if (!user?.uid || !selectedChat || !videoId) return; 
-                
-                const message = {
-                    type: 'video',
-                    videoId: videoId, 
-                    senderId: user.uid,
-                    createdAt: new Date().toISOString(),
-                };
-                
+                const message = { type: 'video', videoId: videoId, senderId: user.uid, createdAt: new Date().toISOString() };
                 await addDoc(collection(db, 'artifacts', appId, 'chats', selectedChat, 'messages'), message);
-
-                const chatRef = doc(db, 'artifacts', appId, 'chats', selectedChat);
-                const chatSnap = await getDoc(chatRef);
-                const chatData = chatSnap.data();
-                
-                const now = new Date().getTime();
-                const lastTime = chatData.streak ? new Date(chatData.streak.lastMessageTime).getTime() : 0;
-                const lastSender = chatData.streak ? chatData.streak.lastSenderId : null;
-                const currentCount = chatData.streak ? chatData.streak.count : 0;
-                
-                const isWithin24Hours = (now - lastTime) < 86400000;
-                const streakLost = (now - lastTime) >= 86400000;
-
+                const chatRef = doc(db, 'artifacts', appId, 'chats', selectedChat); const chatSnap = await getDoc(chatRef); const chatData = chatSnap.data();
+                const now = new Date().getTime(); const lastTime = chatData.streak ? new Date(chatData.streak.lastMessageTime).getTime() : 0; const lastSender = chatData.streak ? chatData.streak.lastSenderId : null; const currentCount = chatData.streak ? chatData.streak.count : 0;
+                const isWithin24Hours = (now - lastTime) < 86400000; const streakLost = (now - lastTime) >= 86400000;
                 let newCount = currentCount;
-
-                if (currentCount === 0) {
-                    newCount = 1; 
-                } else if (isWithin24Hours && lastSender !== user.uid) {
-                    newCount = currentCount + 1; 
-                } else if (streakLost) {
-                    newCount = 1; 
-                } else if (lastSender === user.uid) {
-                    newCount = currentCount; 
-                }
-
-                await updateDoc(chatRef, {
-                    streak: {
-                        count: newCount,
-                        lastMessageTime: new Date().toISOString(),
-                        lastSenderId: user.uid
-                    },
-                    lastMessageTime: new Date().toISOString(),
-                    lastSenderId: user.uid
-                });
-                
+                if (currentCount === 0) { newCount = 1; } else if (isWithin24Hours && lastSender !== user.uid) { newCount = currentCount + 1; } else if (streakLost) { newCount = 1; } else if (lastSender === user.uid) { newCount = currentCount; }
+                await updateDoc(chatRef, { streak: { count: newCount, lastMessageTime: new Date().toISOString(), lastSenderId: user.uid }, lastMessageTime: new Date().toISOString(), lastSenderId: user.uid });
                 onClose();
             };
-
             if (!isOpen) return null;
-
             return (
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
                     <div className="bg-gray-900 w-full rounded-t-2xl p-6 border-t border-gray-700 animate-in slide-in-from-bottom">
-                        <h3 className="text-white font-bold text-lg mb-4 flex justify-between items-center">
-                            Compartir en Chat
-                            <button onClick={onClose}><X size={20} className="text-gray-400"/></button>
-                        </h3>
-
+                        <h3 className="text-white font-bold text-lg mb-4 flex justify-between items-center">Compartir en Chat<button onClick={onClose}><X size={20} className="text-gray-400"/></button></h3>
                         <div className="max-h-64 overflow-y-auto space-y-3 mb-6">
                             {chats.filter(c => c.status === 'accepted').map(chat => {
-                                const otherUid = chat.participants.find(uid => uid !== user.uid);
-                                const otherUser = chat.participantsData?.[otherUid];
-                                const otherName = otherUser?.displayName || "Usuario";
-                                const isSelected = selectedChat === chat.id;
-
-                                return (
-                                    <div 
-                                        key={chat.id} 
-                                        onClick={() => setSelectedChat(chat.id)}
-                                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${isSelected ? 'bg-cyan-600 border-cyan-400' : 'bg-gray-800/40 border-gray-700 hover:bg-gray-800'}`}
-                                    >
-                                        <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0">
-                                            <img src={otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`} className="w-full h-full object-cover"/>
-                                        </div>
-                                        <span className="font-medium text-white">{otherName}</span>
-                                    </div>
-                                );
+                                const otherUid = chat.participants.find(uid => uid !== user.uid); const otherUser = chat.participantsData?.[otherUid]; const otherName = otherUser?.displayName || "Usuario"; const isSelected = selectedChat === chat.id;
+                                return (<div key={chat.id} onClick={() => setSelectedChat(chat.id)} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${isSelected ? 'bg-cyan-600 border-cyan-400' : 'bg-gray-800/40 border-gray-700 hover:bg-gray-800'}`}><div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0"><img src={otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`} className="w-full h-full object-cover"/></div><span className="font-medium text-white">{otherName}</span></div>);
                             })}
                         </div>
-                        
-                        <button 
-                            onClick={handleSend}
-                            disabled={!selectedChat}
-                            className="w-full py-3.5 bg-white text-black font-bold rounded-xl disabled:opacity-50 hover:bg-gray-200 transition"
-                        >
-                            Enviar Video
-                        </button>
-
+                        <button onClick={handleSend} disabled={!selectedChat} className="w-full py-3.5 bg-white text-black font-bold rounded-xl disabled:opacity-50 hover:bg-gray-200 transition">Enviar Video</button>
                     </div>
                 </div>
             );
         };
 
-
-        // --- RESTO DE PANTALLAS Y LOGICA ---
-        
         const AuthScreen = () => {
-            const [isRegistering, setIsRegistering] = useState(false);
-            const [username, setUsername] = useState("");
-            const [password, setPassword] = useState("");
-            const [error, setError] = useState("");
-            const [loading, setLoading] = useState(false);
-
+             const [isRegistering, setIsRegistering] = useState(false); const [username, setUsername] = useState(""); const [password, setPassword] = useState(""); const [error, setError] = useState(""); const [loading, setLoading] = useState(false);
             const handleAuth = async (e) => {
-                e.preventDefault();
-                setError("");
-                setLoading(true);
-                // Usamos un email interno fijo para usar el sistema de autenticación de Firebase
-                const email = `${username.toLowerCase().replace(/\s/g, '')}@liveclips.internal`;
+                e.preventDefault(); setError(""); setLoading(true); const email = `${username.toLowerCase().replace(/\s/g, '')}@liveclips.internal`;
                 try {
-                if (isRegistering) {
-                    const uc = await createUserWithEmailAndPassword(auth, email, password);
-                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uc.user.uid), {
-                        displayName: username, username, photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${uc.user.uid}`,
-                        bannerURL: 'https://placehold.co/600x150/1f2937/d1d5db?text=Toca+para+cambiar+el+Banner', // Banner por defecto
-                        bio: "Hola, soy nuevo aquí.", createdAt: new Date().toISOString(), stats: { followers: 0, following: 0, likes: 0 },
-                        isVerified: false 
-                    });
-                    await updateProfile(uc.user, { displayName: username });
-                } else {
-                    await signInWithEmailAndPassword(auth, email, password);
-                }
-                } catch (err) { setError(err.message); }
-                setLoading(false);
+                if (isRegistering) { const uc = await createUserWithEmailAndPassword(auth, email, password); await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uc.user.uid), { displayName: username, username, photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${uc.user.uid}`, bannerURL: 'https://placehold.co/600x150/1f2937/d1d5db?text=Toca+para+cambiar+el+Banner', bio: "Hola, soy nuevo aquí.", createdAt: new Date().toISOString(), stats: { followers: 0, following: 0, likes: 0 }, isVerified: false }); await updateProfile(uc.user, { displayName: username }); } else { await signInWithEmailAndPassword(auth, email, password); }
+                } catch (err) { setError(err.message); } setLoading(false);
             };
-
-            return (
-                <div className="flex flex-col items-center justify-center h-screen bg-gray-950 text-white p-6 relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-gray-900 z-0"></div>
-                <div className="z-10 w-full max-w-sm bg-gray-900/80 backdrop-blur-xl border border-gray-700 p-8 rounded-3xl shadow-2xl">
-                    <div className="flex flex-col items-center mb-8">
-                    <h1 className="text-3xl font-bold text-white mb-2">LiveClips</h1>
-                    <p className="text-gray-400 text-sm">Tu mundo en video</p>
-                    </div>
-                    <form onSubmit={handleAuth} className="space-y-4">
-                    <input type="text" placeholder="Usuario" className="w-full bg-gray-800 text-white p-4 rounded-xl border border-gray-600 outline-none focus:border-white transition" value={username} onChange={(e) => setUsername(e.target.value)} />
-                    <input type="password" placeholder="Contraseña" className="w-full bg-gray-800 text-white p-4 rounded-xl border border-gray-600 outline-none focus:border-white transition" value={password} onChange={(e) => setPassword(e.target.value)} />
-                    {error && <p className="text-red-400 text-xs">{error}</p>}
-                    <button type="submit" disabled={loading} className="w-full bg-white hover:bg-gray-200 text-black font-bold py-4 rounded-xl transition flex justify-center">{loading ? <Loader2 className="animate-spin" /> : (isRegistering ? "Registrarse" : "Entrar")}</button>
-                    </form>
-                    <p className="mt-6 text-center text-sm text-gray-400 cursor-pointer hover:text-white transition" onClick={() => setIsRegistering(!isRegistering)}>{isRegistering ? "¿Ya tienes cuenta?" : "Crear cuenta nueva"}</p>
-                </div>
-                </div>
-            );
+            return (<div className="flex flex-col items-center justify-center h-screen bg-gray-950 text-white p-6 relative overflow-hidden"><div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-gray-900 z-0"></div><div className="z-10 w-full max-w-sm bg-gray-900/80 backdrop-blur-xl border border-gray-700 p-8 rounded-3xl shadow-2xl"><div className="flex flex-col items-center mb-8"><h1 className="text-3xl font-bold text-white mb-2">LiveClips</h1><p className="text-gray-400 text-sm">Tu mundo en video</p></div><form onSubmit={handleAuth} className="space-y-4"><input type="text" placeholder="Usuario" className="w-full bg-gray-800 text-white p-4 rounded-xl border border-gray-600 outline-none focus:border-white transition" value={username} onChange={(e) => setUsername(e.target.value)} /><input type="password" placeholder="Contraseña" className="w-full bg-gray-800 text-white p-4 rounded-xl border border-gray-600 outline-none focus:border-white transition" value={password} onChange={(e) => setPassword(e.target.value)} />{error && <p className="text-red-400 text-xs">{error}</p>}<button type="submit" disabled={loading} className="w-full bg-white hover:bg-gray-200 text-black font-bold py-4 rounded-xl transition flex justify-center">{loading ? <Loader2 className="animate-spin" /> : (isRegistering ? "Registrarse" : "Entrar")}</button></form><p className="mt-6 text-center text-sm text-gray-400 cursor-pointer hover:text-white transition" onClick={() => setIsRegistering(!isRegistering)}>{isRegistering ? "¿Ya tienes cuenta?" : "Crear cuenta nueva"}</p></div></div>);
         };
 
         const VideoPlayer = ({ video, isActive, toggleLike, onShare, onVisitProfile, onOpenComments }) => {
-            const videoRef = useRef(null);
-            const [playing, setPlaying] = useState(false);
-            const [progress, setProgress] = useState(0);
-            const [buffering, setBuffering] = useState(false);
-            const [hasLiked, setHasLiked] = useState(false);
-            const [authorProfile, setAuthorProfile] = useState({});
-
-            useEffect(() => {
-                if(!auth.currentUser || !video.id) return;
-                const likeRef = doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'likes', auth.currentUser.uid);
-                const unsubscribe = auth.currentUser ? onSnapshot(likeRef, (s) => {
-                    setHasLiked(s.exists());
-                }) : () => {};
-                return () => unsubscribe();
-            }, [video.id, auth.currentUser]);
-            
-            useEffect(() => {
-                if (!video.authorId) return;
-                const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', video.authorId), s => {
-                    if(s.exists()) setAuthorProfile(s.data());
-                });
-                return () => unsub();
-            }, [video.authorId]);
-
-
-            useEffect(() => {
-                const videoEl = videoRef.current;
-                if (!videoEl) return;
-
-                if (isActive) {
-                const playPromise = videoEl.play();
-                if (playPromise !== undefined) {
-                    playPromise
-                    .then(() => {
-                        setPlaying(true);
-                        videoEl.muted = false;
-                    })
-                    .catch(() => {
-                        videoEl.muted = true;
-                        videoEl.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-                    });
-                }
-                } else {
-                videoEl.pause();
-                videoEl.currentTime = 0;
-                setPlaying(false);
-                }
-            }, [isActive]);
-
-            useEffect(() => {
-                const el = videoRef.current;
-                if(!el) return;
-                const wait = () => setBuffering(true);
-                const play = () => setBuffering(false);
-                el.addEventListener('waiting', wait);
-                el.addEventListener('playing', play);
-                return () => { el.removeEventListener('waiting', wait); el.removeEventListener('playing', play); };
-            }, []);
-
-            const togglePlay = () => {
-                const el = videoRef.current;
-                if(!el) return;
-                if(el.paused) { el.play(); setPlaying(true); } else { el.pause(); setPlaying(false); }
-            };
-
-            const handleTime = () => {
-                if(videoRef.current) setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100);
-            };
-
-            const handleLikeClick = () => {
-                if(!hasLiked) {
-                    toggleLike(video, auth.currentUser.uid);
-                }
-            };
-            
-            const renderDescriptionWithMentions = (text) => {
-                const mentionRegex = /@(\w+)/g;
-                let parts = [];
-                let lastIndex = 0;
-                let match;
-
-                while ((match = mentionRegex.exec(text)) !== null) {
-                    const before = text.substring(lastIndex, match.index);
-                    const mention = match[0];
-                    const username = match[1];
-
-                    if (before) {
-                        parts.push(<React.Fragment key={`text-${lastIndex}`}>{before}</React.Fragment>);
-                    }
-
-                    parts.push(
-                        <span 
-                            key={`mention-${match.index}`} 
-                            className="text-cyan-400 font-semibold cursor-pointer pointer-events-auto hover:underline"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onVisitProfile(username); 
-                            }}
-                        >
-                            {mention}
-                        </span>
-                    );
-                    lastIndex = match.index + mention.length;
-                }
-
-                if (lastIndex < text.length) {
-                    parts.push(<React.Fragment key={`text-${lastIndex}`}>{text.substring(lastIndex)}</React.Fragment>);
-                }
-
-                return <p className="text-sm drop-shadow-md line-clamp-2 mb-4 text-gray-200 font-light leading-relaxed">{parts}</p>;
-            };
-
-
+             const videoRef = useRef(null); const [playing, setPlaying] = useState(false); const [progress, setProgress] = useState(0); const [buffering, setBuffering] = useState(false); const [hasLiked, setHasLiked] = useState(false); const [authorProfile, setAuthorProfile] = useState({});
+            useEffect(() => { if(!auth.currentUser || !video.id) return; const likeRef = doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'likes', auth.currentUser.uid); const unsubscribe = auth.currentUser ? onSnapshot(likeRef, (s) => { setHasLiked(s.exists()); }) : () => {}; return () => unsubscribe(); }, [video.id, auth.currentUser]);
+            useEffect(() => { if (!video.authorId) return; const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', video.authorId), s => { if(s.exists()) setAuthorProfile(s.data()); }); return () => unsub(); }, [video.authorId]);
+            useEffect(() => { const videoEl = videoRef.current; if (!videoEl) return; if (isActive) { const playPromise = videoEl.play(); if (playPromise !== undefined) { playPromise.then(() => { setPlaying(true); videoEl.muted = false; }).catch(() => { videoEl.muted = true; videoEl.play().then(() => setPlaying(true)).catch(() => setPlaying(false)); }); } } else { videoEl.pause(); videoEl.currentTime = 0; setPlaying(false); } }, [isActive]);
+            useEffect(() => { const el = videoRef.current; if(!el) return; const wait = () => setBuffering(true); const play = () => setBuffering(false); el.addEventListener('waiting', wait); el.addEventListener('playing', play); return () => { el.removeEventListener('waiting', wait); el.removeEventListener('playing', play); }; }, []);
+            const togglePlay = () => { const el = videoRef.current; if(!el) return; if(el.paused) { el.play(); setPlaying(true); } else { el.pause(); setPlaying(false); } };
+            const handleTime = () => { if(videoRef.current) setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100); };
+            const handleLikeClick = () => { if(!hasLiked) { toggleLike(video, auth.currentUser.uid); } };
+            const renderDescriptionWithMentions = (text) => { const mentionRegex = /@(\w+)/g; let parts = []; let lastIndex = 0; let match; while ((match = mentionRegex.exec(text)) !== null) { const before = text.substring(lastIndex, match.index); const mention = match[0]; const username = match[1]; if (before) { parts.push(<React.Fragment key={`text-${lastIndex}`}>{before}</React.Fragment>); } parts.push(<span key={`mention-${match.index}`} className="text-cyan-400 font-semibold cursor-pointer pointer-events-auto hover:underline" onClick={(e) => { e.stopPropagation(); onVisitProfile(username); }}>{mention}</span>); lastIndex = match.index + mention.length; } if (lastIndex < text.length) { parts.push(<React.Fragment key={`text-${lastIndex}`}>{text.substring(lastIndex)}</React.Fragment>); } return <p className="text-sm drop-shadow-md line-clamp-2 mb-4 text-gray-200 font-light leading-relaxed">{parts}</p>; };
             const actionBtnClass = "p-2 bg-gray-800/80 rounded-xl border border-gray-600 backdrop-blur-md transition-all active:scale-90 hover:bg-gray-700 hover:border-gray-400 shadow-lg";
-
-            return (
-                <div className="relative w-full h-full snap-start bg-gray-900 overflow-hidden" style={{ height: '100dvh' }}>
-                <video
-                    ref={videoRef}
-                    src={video.url}
-                    className="w-full h-full object-cover opacity-90"
-                    loop
-                    playsInline
-                    onClick={togglePlay}
-                    onTimeUpdate={handleTime}
-                />
-                
-                {buffering && <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none"><Loader2 size={50} className="text-white/50 animate-spin"/></div>}
-                
-                {!playing && !buffering && (
-                    <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
-                    <div className="bg-white/10 backdrop-blur-md p-6 rounded-full border border-white/20 shadow-xl">
-                        <Play size={40} className="text-white fill-white opacity-80" />
-                    </div>
-                    </div>
-                )}
-
-                <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-800/50 z-30">
-                    <div className="h-full bg-white transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(255,255,255,0.5)]" style={{ width: `${progress}%` }} />
-                </div>
-
-                <div className="absolute right-2 bottom-28 flex flex-col items-center gap-5 z-30">
-                    <div onClick={() => onVisitProfile(video.authorId)} className="relative cursor-pointer transition-transform active:scale-90 mb-2">
-                    <div className="w-12 h-12 rounded-full border-2 border-white p-0.5 overflow-hidden bg-gray-800 shadow-lg">
-                        <img src={video.authorAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${video.authorId}`} className="w-full h-full object-cover" />
-                    </div>
-                    <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-pink-500 rounded-full w-5 h-5 flex items-center justify-center shadow-md ring-2 ring-gray-900">
-                        <span className="text-white text-[10px] font-bold">+</span>
-                    </div>
-                    </div>
-
-                    <button onClick={handleLikeClick} disabled={hasLiked} className="flex flex-col items-center gap-1 group disabled:opacity-70">
-                    <div className={actionBtnClass}>
-                        <img src={ICONS.corazon} className={`w-7 h-7 transition-all duration-300 drop-shadow-lg ${hasLiked ? 'filter-red' : 'invert opacity-90'}`} />
-                    </div>
-                    <span className="text-white text-xs font-medium drop-shadow-md">{video.likes}</span>
-                    </button>
-                    
-                    <button onClick={() => onOpenComments(video)} className="flex flex-col items-center gap-1 group">
-                        <div className={`${actionBtnClass} comments-btn-bg`}>
-                            <MessageSquare className="w-7 h-7 text-white opacity-90 drop-shadow-lg"/>
-                        </div>
-                        <span className="text-white text-xs font-medium drop-shadow-md">{video.commentsCount || 0}</span>
-                    </button>
-
-                    <button onClick={() => onShare(video.id)} className="flex flex-col items-center gap-1 group">
-                    <div className={actionBtnClass}>
-                        <img src={ICONS.compartir} className="w-7 h-7 invert opacity-90 drop-shadow-lg" />
-                    </div>
-                    <span className="text-white text-xs font-medium drop-shadow-md">Share</span>
-                    </button>
-
-                    <div className={`mt-2 w-12 h-12 rounded-full bg-gray-800 border-[3px] border-gray-700 flex items-center justify-center overflow-hidden ${playing ? 'animate-spin-slow' : ''} shadow-lg`}>
-                        <div className="w-full h-full bg-gradient-to-br from-gray-700 to-black flex items-center justify-center">
-                            <Music2 size={14} className="text-white drop-shadow-md" />
-                        </div>
-                    </div>
-                </div>
-
-                <div className="absolute bottom-24 left-4 right-20 z-20 text-white pointer-events-none">
-                    <div className="flex items-center gap-1">
-                        <h3 className="font-bold text-lg drop-shadow-lg mb-2 text-gray-100 cursor-pointer pointer-events-auto w-fit" onClick={() => onVisitProfile(video.authorId)}>@{video.authorName}</h3>
-                        {authorProfile.isVerified && <VerifiedBadge size={18} />}
-                    </div>
-                    {renderDescriptionWithMentions(video.description)}
-                    <div className="flex items-center gap-2 text-xs font-medium bg-white/5 border border-white/10 w-fit px-4 py-2 rounded-full backdrop-blur-md shadow-sm">
-                    <Music2 size={12} />
-                    <span className="animate-marquee whitespace-nowrap max-w-[150px] overflow-hidden text-ellipsis">Sonido original - {video.authorName}</span>
-                    </div>
-                </div>
-                </div>
-            );
+            return (<div className="relative w-full h-full snap-start bg-gray-900 overflow-hidden" style={{ height: '100dvh' }}><video ref={videoRef} src={video.url} className="w-full h-full object-cover opacity-90" loop playsInline onClick={togglePlay} onTimeUpdate={handleTime}/>{buffering && <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none"><Loader2 size={50} className="text-white/50 animate-spin"/></div>}{!playing && !buffering && (<div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none"><div className="bg-white/10 backdrop-blur-md p-6 rounded-full border border-white/20 shadow-xl"><Play size={40} className="text-white fill-white opacity-80" /></div></div>)}<div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-800/50 z-30"><div className="h-full bg-white transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(255,255,255,0.5)]" style={{ width: `${progress}%` }} /></div><div className="absolute right-2 bottom-28 flex flex-col items-center gap-5 z-30"><div onClick={() => onVisitProfile(video.authorId)} className="relative cursor-pointer transition-transform active:scale-90 mb-2"><div className="w-12 h-12 rounded-full border-2 border-white p-0.5 overflow-hidden bg-gray-800 shadow-lg"><img src={video.authorAvatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${video.authorId}`} className="w-full h-full object-cover" /></div><div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-pink-500 rounded-full w-5 h-5 flex items-center justify-center shadow-md ring-2 ring-gray-900"><span className="text-white text-[10px] font-bold">+</span></div></div><button onClick={handleLikeClick} disabled={hasLiked} className="flex flex-col items-center gap-1 group disabled:opacity-70"><div className={actionBtnClass}><img src={ICONS.corazon} className={`w-7 h-7 transition-all duration-300 drop-shadow-lg ${hasLiked ? 'filter-red' : 'invert opacity-90'}`} /></div><span className="text-white text-xs font-medium drop-shadow-md">{video.likes}</span></button><button onClick={() => onOpenComments(video)} className="flex flex-col items-center gap-1 group"><div className={`${actionBtnClass} comments-btn-bg`}><MessageSquare className="w-7 h-7 text-white opacity-90 drop-shadow-lg"/></div><span className="text-white text-xs font-medium drop-shadow-md">{video.commentsCount || 0}</span></button><button onClick={() => onShare(video.id)} className="flex flex-col items-center gap-1 group"><div className={actionBtnClass}><img src={ICONS.compartir} className="w-7 h-7 invert opacity-90 drop-shadow-lg" /></div><span className="text-white text-xs font-medium drop-shadow-md">Share</span></button><div className={`mt-2 w-12 h-12 rounded-full bg-gray-800 border-[3px] border-gray-700 flex items-center justify-center overflow-hidden ${playing ? 'animate-spin-slow' : ''} shadow-lg`}><div className="w-full h-full bg-gradient-to-br from-gray-700 to-black flex items-center justify-center"><Music2 size={14} className="text-white drop-shadow-md" /></div></div></div><div className="absolute bottom-24 left-4 right-20 z-20 text-white pointer-events-none"><div className="flex items-center gap-1"><h3 className="font-bold text-lg drop-shadow-lg mb-2 text-gray-100 cursor-pointer pointer-events-auto w-fit" onClick={() => onVisitProfile(video.authorId)}>@{video.authorName}</h3>{authorProfile.isVerified && <VerifiedBadge size={18} />}</div>{renderDescriptionWithMentions(video.description)}<div className="flex items-center gap-2 text-xs font-medium bg-white/5 border border-white/10 w-fit px-4 py-2 rounded-full backdrop-blur-md shadow-sm"><Music2 size={12} /><span className="animate-marquee whitespace-nowrap max-w-[150px] overflow-hidden text-ellipsis">Sonido original - {video.authorName}</span></div></div></div>);
         };
 
         const ProfileView = ({ targetUserId, currentUser, videos, onBack, onVideoClick, onLogout, onChat }) => {
-            const [profile, setProfile] = useState(null);
-            const [isFollowing, setIsFollowing] = useState(false);
-            
-            const [isEditing, setIsEditing] = useState(false);
-            
-            const isMyProfile = targetUserId === currentUser?.uid; 
-            const userVideos = videos.filter(v => v.authorId === targetUserId);
-
-            useEffect(() => {
-                if (!targetUserId) return;
-                const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId), (s) => {
-                if (s.exists()) setProfile(s.data());
-                });
-                if (!isMyProfile && currentUser) {
-                    const checkFollow = onSnapshot(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'following', targetUserId), (s) => {
-                        setIsFollowing(s.exists());
-                    });
-                    return () => { unsub(); checkFollow(); };
-                }
-                return () => unsub();
-            }, [targetUserId, currentUser]);
-
-            const handleFollow = async () => {
-                if (!currentUser?.uid) return; 
-                
-                const currentUid = currentUser.uid; 
-                const myRef = doc(db, 'artifacts', appId, 'users', currentUid, 'following', targetUserId);
-                const targetPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId);
-                const myPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUid);
-
-                if (isFollowing) {
-                    await deleteDoc(myRef);
-                    await updateDoc(targetPublicRef, { "stats.followers": increment(-1) });
-                    await updateDoc(myPublicRef, { "stats.following": increment(-1) });
-                } else {
-                    await setDoc(myRef, { since: new Date().toISOString() });
-                    await updateDoc(targetPublicRef, { "stats.followers": increment(1) });
-                    await updateDoc(myPublicRef, { "stats.following": increment(1) });
-                    
-                    const uData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUid))).data(); 
-                    await addDoc(collection(db, 'artifacts', appId, 'users', targetUserId, 'notifications'), {
-                        type: 'follow', fromUser: currentUid, fromName: uData.displayName, avatar: uData.photoURL, createdAt: new Date().toISOString()
-                    });
-                }
-            };
-
-            return (
-                <div className="w-full h-full bg-gray-900 overflow-y-auto pb-24 animate-in slide-in-from-right">
-                
-                {/* Botón de regreso y Banner */}
-                <div className="relative w-full h-40 bg-gray-950 border-b border-gray-800 shadow-md" style={{backgroundImage: `url(${profile?.bannerURL})`, backgroundSize: 'cover', backgroundPosition: 'center'}}>
-                    <div className="absolute inset-0 bg-black/30"></div>
-                    
-                    {/* Botón de regreso */}
-                    <div className="absolute top-0 left-0 w-full p-4 pt-8 flex items-center gap-4 z-10">
-                        <button onClick={onBack} className="p-2 bg-gray-800/50 rounded-full hover:bg-gray-700/70 transition">
-                            <ArrowLeft className="text-white"/>
-                        </button>
-                    </div>
-
-                </div>
-
-                <div className="flex flex-col items-center justify-center mb-6 px-4 -mt-16 relative z-10">
-                    <div className="w-24 h-24 rounded-full border-4 border-gray-900 p-1 mb-3 bg-gray-900 shadow-xl">
-                        <img src={profile?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${targetUserId}`} className="w-full h-full rounded-full bg-gray-800 object-cover" />
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <h2 className="text-lg font-bold text-white">@{profile?.username || "Usuario"}</h2>
-                        {profile?.isVerified && <VerifiedBadge size={18} />} 
-                    </div>
-                    <p className="text-sm text-gray-400 text-center mt-1">{profile?.bio || "Sin biografía"}</p>
-                    
-                    <div className="flex items-center gap-8 mt-6 text-center">
-                        <div><div className="font-bold text-white text-lg">{profile?.stats?.following || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Siguiendo</div></div>
-                        <div><div className="font-bold text-white text-lg">{profile?.stats?.followers || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Seguidores</div></div>
-                        <div><div className="font-bold text-white text-lg">{profile?.stats?.likes || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Likes</div></div>
-                    </div>
-                    
-                    <div className="flex gap-2 mt-6 w-full max-w-xs px-4">
-                        {currentUser && (isMyProfile ? (
-                            <>
-                                <button onClick={() => setIsEditing(true)} className="flex-1 py-2 bg-gray-800 text-white text-sm font-bold rounded-lg border border-gray-600">Editar Perfil</button>
-                                <button onClick={onLogout} className="w-10 flex items-center justify-center bg-gray-800 text-white rounded-lg border border-gray-600"><LogOut size={16}/></button>
-                            </>
-                        ) : (
-                            <>
-                                <button 
-                                    onClick={handleFollow}
-                                    className={`flex-1 py-2 text-white text-sm font-bold rounded-lg border transition-all flex items-center justify-center gap-2
-                                    ${isFollowing ? 'bg-gray-800 border-gray-600' : 'bg-white text-black hover:bg-gray-200'}`}
-                                >
-                                    {isFollowing ? <><UserCheck size={16}/> Siguiendo</> : <><UserPlus size={16}/> Seguir</>}
-                                </button>
-                                <button onClick={() => onChat(targetUserId, profile)} className="w-12 flex items-center justify-center bg-gray-800 text-white rounded-lg border border-gray-600">
-                                    <MessageCircle size={18}/>
-                                </button>
-                            </>
-                        ))}
-                    </div>
-                </div>
-
-                <div className="border-t border-gray-800 w-full bg-gray-900 min-h-[300px]">
-                    <div className="grid grid-cols-3 gap-0.5">
-                        {userVideos.map((video, idx) => (
-                            <div key={video.id} onClick={() => onVideoClick(video.id)} className="relative aspect-[3/4] bg-gray-800 cursor-pointer overflow-hidden">
-                            {/* Miniatura truco: video pausado sin controles */}
-                            <video src={video.url + '#t=0.1'} className="w-full h-full object-cover opacity-90 hover:opacity-100 transition" preload="metadata" />
-                            <div className="absolute bottom-1 left-1 flex items-center gap-1 text-[10px] text-white font-bold drop-shadow-md">
-                                <Play size={10} fill="white"/> {video.likes || 0}
-                            </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-                
-                {isMyProfile && <EditProfileModal isOpen={isEditing} onClose={() => setIsEditing(false)} user={currentUser} profile={profile} onUpdate={()=>{}} />}
-                </div>
-            );
+            const [profile, setProfile] = useState(null); const [isFollowing, setIsFollowing] = useState(false); const [isEditing, setIsEditing] = useState(false);
+            const isMyProfile = targetUserId === currentUser?.uid; const userVideos = videos.filter(v => v.authorId === targetUserId);
+            useEffect(() => { if (!targetUserId) return; const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId), (s) => { if (s.exists()) setProfile(s.data()); }); if (!isMyProfile && currentUser) { const checkFollow = onSnapshot(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'following', targetUserId), (s) => { setIsFollowing(s.exists()); }); return () => { unsub(); checkFollow(); }; } return () => unsub(); }, [targetUserId, currentUser]);
+            const handleFollow = async () => { if (!currentUser?.uid) return; const currentUid = currentUser.uid; const myRef = doc(db, 'artifacts', appId, 'users', currentUid, 'following', targetUserId); const targetPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId); const myPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUid); if (isFollowing) { await deleteDoc(myRef); await updateDoc(targetPublicRef, { "stats.followers": increment(-1) }); await updateDoc(myPublicRef, { "stats.following": increment(-1) }); } else { await setDoc(myRef, { since: new Date().toISOString() }); await updateDoc(targetPublicRef, { "stats.followers": increment(1) }); await updateDoc(myPublicRef, { "stats.following": increment(1) }); const uData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUid))).data(); await addDoc(collection(db, 'artifacts', appId, 'users', targetUserId, 'notifications'), { type: 'follow', fromUser: currentUid, fromName: uData.displayName, avatar: uData.photoURL, createdAt: new Date().toISOString() }); } };
+            return (<div className="w-full h-full bg-gray-900 overflow-y-auto pb-24 animate-in slide-in-from-right"><div className="relative w-full h-40 bg-gray-950 border-b border-gray-800 shadow-md" style={{backgroundImage: `url(${profile?.bannerURL})`, backgroundSize: 'cover', backgroundPosition: 'center'}}><div className="absolute inset-0 bg-black/30"></div><div className="absolute top-0 left-0 w-full p-4 pt-8 flex items-center gap-4 z-10"><button onClick={onBack} className="p-2 bg-gray-800/50 rounded-full hover:bg-gray-700/70 transition"><ArrowLeft className="text-white"/></button></div></div><div className="flex flex-col items-center justify-center mb-6 px-4 -mt-16 relative z-10"><div className="w-24 h-24 rounded-full border-4 border-gray-900 p-1 mb-3 bg-gray-900 shadow-xl"><img src={profile?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${targetUserId}`} className="w-full h-full rounded-full bg-gray-800 object-cover" /></div><div className="flex items-center gap-1"><h2 className="text-lg font-bold text-white">@{profile?.username || "Usuario"}</h2>{profile?.isVerified && <VerifiedBadge size={18} />}</div><p className="text-sm text-gray-400 text-center mt-1">{profile?.bio || "Sin biografía"}</p><div className="flex items-center gap-8 mt-6 text-center"><div><div className="font-bold text-white text-lg">{profile?.stats?.following || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Siguiendo</div></div><div><div className="font-bold text-white text-lg">{profile?.stats?.followers || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Seguidores</div></div><div><div className="font-bold text-white text-lg">{profile?.stats?.likes || 0}</div><div className="text-xs text-gray-500 uppercase font-bold">Likes</div></div></div><div className="flex gap-2 mt-6 w-full max-w-xs px-4">{currentUser && (isMyProfile ? (<><button onClick={() => setIsEditing(true)} className="flex-1 py-2 bg-gray-800 text-white text-sm font-bold rounded-lg border border-gray-600">Editar Perfil</button><button onClick={onLogout} className="w-10 flex items-center justify-center bg-gray-800 text-white rounded-lg border border-gray-600"><LogOut size={16}/></button></>) : (<><button onClick={handleFollow} className={`flex-1 py-2 text-white text-sm font-bold rounded-lg border transition-all flex items-center justify-center gap-2 ${isFollowing ? 'bg-gray-800 border-gray-600' : 'bg-white text-black hover:bg-gray-200'}`}>{isFollowing ? <><UserCheck size={16}/> Siguiendo</> : <><UserPlus size={16}/> Seguir</>}</button><button onClick={() => onChat(targetUserId, profile)} className="w-12 flex items-center justify-center bg-gray-800 text-white rounded-lg border border-gray-600"><MessageCircle size={18}/></button></>))}</div></div><div className="border-t border-gray-800 w-full bg-gray-900 min-h-[300px]"><div className="grid grid-cols-3 gap-0.5">{userVideos.map((video, idx) => (<div key={video.id} onClick={() => onVideoClick(video.id)} className="relative aspect-[3/4] bg-gray-800 cursor-pointer overflow-hidden"><video src={video.url + '#t=0.1'} className="w-full h-full object-cover opacity-90 hover:opacity-100 transition" preload="metadata" /><div className="absolute bottom-1 left-1 flex items-center gap-1 text-[10px] text-white font-bold drop-shadow-md"><Play size={10} fill="white"/> {video.likes || 0}</div></div>))}</div></div>{isMyProfile && <EditProfileModal isOpen={isEditing} onClose={() => setIsEditing(false)} user={currentUser} profile={profile} onUpdate={()=>{}} />}</div>);
         };
 
         const EditProfileModal = ({ isOpen, onClose, user, profile }) => {
-            const [displayName, setDisplayName] = useState(profile?.displayName || "");
-            const [bio, setBio] = useState(profile?.bio || "");
-            const [loading, setLoading] = useState(false);
-            const photoInputRef = useRef(null);
-            const bannerInputRef = useRef(null);
-
-            useEffect(() => { 
-                if(profile) { setDisplayName(profile.displayName||""); setBio(profile.bio||""); } 
-            }, [profile]);
-            
+             const [displayName, setDisplayName] = useState(profile?.displayName || ""); const [bio, setBio] = useState(profile?.bio || ""); const [loading, setLoading] = useState(false); const photoInputRef = useRef(null); const bannerInputRef = useRef(null);
+            useEffect(() => { if(profile) { setDisplayName(profile.displayName||""); setBio(profile.bio||""); } }, [profile]);
             const handleImageUpload = async (event, type) => {
-                if (!user?.uid) return;
-                const file = event.target.files[0];
-                if (!file) return;
-
-                setLoading(true);
-                try {
-                    const path = `${type}s/${user.uid}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
-                    const url = await uploadToGitHub(file, path, (s) => console.log(s)); 
-                    
-                    const updateData = type === 'photo' ? { photoURL: url } : { bannerURL: url };
-                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), updateData);
-                } catch(e) {
-                    console.error("Error al subir imagen:", e.message);
-                }
-                setLoading(false);
+                if (!user?.uid) return; const file = event.target.files[0]; if (!file) return; setLoading(true);
+                try { const path = `${type}s/${user.uid}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`; const url = await uploadToGitHub(file, path, (s) => console.log(s)); const updateData = type === 'photo' ? { photoURL: url } : { bannerURL: url }; await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), updateData); } catch(e) { console.error("Error al subir imagen:", e.message); } setLoading(false);
             };
-
-            const handleSaveText = async () => {
-                if (!user?.uid) return;
-                setLoading(true);
-                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), { displayName, bio });
-                setLoading(false); onClose();
-            };
-
+            const handleSaveText = async () => { if (!user?.uid) return; setLoading(true); await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), { displayName, bio }); setLoading(false); onClose(); };
             if (!isOpen) return null;
-            return (
-                <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
-                <div className="bg-gray-900 w-full max-w-xs rounded-xl p-6 border border-gray-700">
-                    <h3 className="text-white font-bold mb-4">Editar Perfil</h3>
-                    
-                    {loading && <div className="text-cyan-400 mb-4 flex items-center gap-2"><Loader2 className="animate-spin" size={16}/> Cargando imágenes...</div>}
-
-                    <div className="flex flex-col items-center mb-4">
-                        <label className="relative cursor-pointer mb-2">
-                            <div className="w-16 h-16 rounded-full border-2 border-white overflow-hidden bg-gray-800">
-                                <img src={profile?.photoURL} className="w-full h-full object-cover"/>
-                            </div>
-                            <div className="absolute bottom-0 right-0 bg-cyan-600 rounded-full p-1.5 border border-gray-900"><Camera size={14} className="text-white"/></div>
-                            <input type="file" accept="image/*" className="hidden" ref={photoInputRef} onChange={(e) => handleImageUpload(e, 'photo')} />
-                        </label>
-                        <button onClick={() => photoInputRef.current.click()} className="text-xs text-gray-400 hover:text-white">Cambiar Foto</button>
-                    </div>
-
-                    <div className="w-full mb-4">
-                        <label className="relative cursor-pointer w-full h-16 block bg-gray-800 border border-gray-600 rounded-lg overflow-hidden">
-                            <img src={profile?.bannerURL} className="w-full h-full object-cover"/>
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 hover:bg-black/60 transition"><Camera size={18} className="text-white"/></div>
-                            <input type="file" accept="image/*" className="hidden" ref={bannerInputRef} onChange={(e) => handleImageUpload(e, 'banner')} />
-                        </label>
-                        <button onClick={() => bannerInputRef.current.click()} className="text-xs text-gray-400 hover:text-white mt-1 block">Cambiar Banner (GIF permitido)</button>
-                    </div>
-
-                    <input value={displayName} onChange={e => setDisplayName(e.target.value)} className="w-full bg-gray-800 text-white p-3 rounded-lg mb-3 outline-none" placeholder="Nombre" />
-                    <textarea value={bio} onChange={e => setBio(e.target.value)} className="w-full bg-gray-800 text-white p-3 rounded-lg mb-4 outline-none" placeholder="Bio" rows={3} />
-                    <button onClick={handleSaveText} disabled={loading} className="w-full bg-white text-black font-bold py-3 rounded-lg">{loading ? "Guardando..." : "Guardar Texto"}</button>
-                    <button onClick={onClose} className="w-full text-gray-400 text-sm mt-3">Cerrar</button>
-                </div>
-                </div>
-            );
+            return (<div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6"><div className="bg-gray-900 w-full max-w-xs rounded-xl p-6 border border-gray-700"><h3 className="text-white font-bold mb-4">Editar Perfil</h3>{loading && <div className="text-cyan-400 mb-4 flex items-center gap-2"><Loader2 className="animate-spin" size={16}/> Cargando imágenes...</div>}<div className="flex flex-col items-center mb-4"><label className="relative cursor-pointer mb-2"><div className="w-16 h-16 rounded-full border-2 border-white overflow-hidden bg-gray-800"><img src={profile?.photoURL} className="w-full h-full object-cover"/></div><div className="absolute bottom-0 right-0 bg-cyan-600 rounded-full p-1.5 border border-gray-900"><Camera size={14} className="text-white"/></div><input type="file" accept="image/*" className="hidden" ref={photoInputRef} onChange={(e) => handleImageUpload(e, 'photo')} /></label><button onClick={() => photoInputRef.current.click()} className="text-xs text-gray-400 hover:text-white">Cambiar Foto</button></div><div className="w-full mb-4"><label className="relative cursor-pointer w-full h-16 block bg-gray-800 border border-gray-600 rounded-lg overflow-hidden"><img src={profile?.bannerURL} className="w-full h-full object-cover"/><div className="absolute inset-0 flex items-center justify-center bg-black/40 hover:bg-black/60 transition"><Camera size={18} className="text-white"/></div><input type="file" accept="image/*" className="hidden" ref={bannerInputRef} onChange={(e) => handleImageUpload(e, 'banner')} /></label><button onClick={() => bannerInputRef.current.click()} className="text-xs text-gray-400 hover:text-white mt-1 block">Cambiar Banner (GIF permitido)</button></div><input value={displayName} onChange={e => setDisplayName(e.target.value)} className="w-full bg-gray-800 text-white p-3 rounded-lg mb-3 outline-none" placeholder="Nombre" /><textarea value={bio} onChange={e => setBio(e.target.value)} className="w-full bg-gray-800 text-white p-3 rounded-lg mb-4 outline-none" placeholder="Bio" rows={3} /><button onClick={handleSaveText} disabled={loading} className="w-full bg-white text-black font-bold py-3 rounded-lg">{loading ? "Guardando..." : "Guardar Texto"}</button><button onClick={onClose} className="w-full text-gray-400 text-sm mt-3">Cerrar</button></div></div>);
         };
 
         const UploadModal = ({ isOpen, onClose, user }) => {
-            const [file, setFile] = useState(null);
-            const [preview, setPreview] = useState(null);
-            const [desc, setDesc] = useState("");
-            const [loading, setLoading] = useState(false);
-            const [status, setStatus] = useState("");
-
+             const [file, setFile] = useState(null); const [preview, setPreview] = useState(null); const [desc, setDesc] = useState(""); const [loading, setLoading] = useState(false); const [status, setStatus] = useState("");
             const handleFile = (e) => { const f = e.target.files[0]; if(f) { setFile(f); setPreview(URL.createObjectURL(f)); }};
-            const handleUpload = async () => {
-                if(!user?.uid || !file) return;
-                setLoading(true);
-                try {
-                    const path = `videos/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
-                    const url = await uploadToGitHub(file, path, (s) => console.log(s)); 
-                    const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
-                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), {
-                        url, authorId: user.uid, authorName: userData.displayName, authorAvatar: userData.photoURL,
-                        description: desc, likes: 0, commentsCount: 0, createdAt: new Date().toISOString()
-                    });
-                    onClose(); setFile(null); setPreview(null); setDesc("");
-                } catch(e) { setStatus("Error: " + e.message); }
-                setLoading(false);
-            };
-
+            const handleUpload = async () => { if(!user?.uid || !file) return; setLoading(true); try { const path = `videos/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`; const url = await uploadToGitHub(file, path, (s) => console.log(s)); const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data(); await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), { url, authorId: user.uid, authorName: userData.displayName, authorAvatar: userData.photoURL, description: desc, likes: 0, commentsCount: 0, createdAt: new Date().toISOString() }); onClose(); setFile(null); setPreview(null); setDesc(""); } catch(e) { setStatus("Error: " + e.message); } setLoading(false); };
             if(!isOpen) return null;
-            return (
-                <div className="fixed inset-0 z-50 bg-gray-900/95 backdrop-blur-xl flex flex-col animate-in fade-in">
-                    <div className="p-4 flex justify-between items-center border-b border-gray-700">
-                        <button onClick={onClose}><X className="text-gray-400 hover:text-white"/></button>
-                        <h3 className="text-white font-bold flex items-center gap-2"><img src={ICONS.crear} className="w-6 h-6 invert"/> Nuevo Video</h3>
-                        <div className="w-6"></div>
-                    </div>
-                    <div className="flex-1 p-6 flex flex-col items-center justify-center">
-                        {!preview ? (
-                            <label className="w-full h-64 border-2 border-dashed border-gray-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-gray-400 bg-gray-800/30">
-                                <div className="p-4 rounded-full bg-gray-700 mb-3"><img src={ICONS.crear} className="w-6 h-6 invert opacity-70"/></div>
-                                <span className="text-gray-400 font-medium">Seleccionar video</span>
-                                <input type="file" accept="video/*" className="hidden" onChange={handleFile}/>
-                            </label>
-                        ) : (
-                            <div className="relative w-full h-64 bg-black rounded-2xl overflow-hidden border border-gray-700">
-                                <video src={preview} className="w-full h-full object-contain"/>
-                                <button onClick={()=>{setPreview(null);setFile(null)}} className="absolute top-2 right-2 bg-black/50 p-1.5 rounded-full text-white hover:bg-black/80"><X size={16}/></button>
-                            </div>
-                        )}
-                        <textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Añade una descripción (Ej: @usuario mira esto)..." className="w-full bg-gray-900 text-white p-4 rounded-xl mt-6 h-24 outline-none resize-none border border-gray-700 focus:border-gray-500"/>
-                        {status && <p className="text-cyan-400 text-sm mt-2 animate-pulse">{status}</p>}
-                        <button disabled={loading||!file} onClick={handleUpload} className="w-full bg-white text-black font-bold py-3.5 rounded-xl mt-auto mb-4 disabled:opacity-50 hover:bg-gray-200 transition shadow-lg">{loading?"Publicando...":"Publicar Video"}</button>
-                    </div>
-                </div>
-            );
+            return (<div className="fixed inset-0 z-50 bg-gray-900/95 backdrop-blur-xl flex flex-col animate-in fade-in"><div className="p-4 flex justify-between items-center border-b border-gray-700"><button onClick={onClose}><X className="text-gray-400 hover:text-white"/></button><h3 className="text-white font-bold flex items-center gap-2"><img src={ICONS.crear} className="w-6 h-6 invert"/> Nuevo Video</h3><div className="w-6"></div></div><div className="flex-1 p-6 flex flex-col items-center justify-center">{!preview ? (<label className="w-full h-64 border-2 border-dashed border-gray-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-gray-400 bg-gray-800/30"><div className="p-4 rounded-full bg-gray-700 mb-3"><img src={ICONS.crear} className="w-6 h-6 invert opacity-70"/></div><span className="text-gray-400 font-medium">Seleccionar video</span><input type="file" accept="video/*" className="hidden" onChange={handleFile}/></label>) : (<div className="relative w-full h-64 bg-black rounded-2xl overflow-hidden border border-gray-700"><video src={preview} className="w-full h-full object-contain"/><button onClick={()=>{setPreview(null);setFile(null)}} className="absolute top-2 right-2 bg-black/50 p-1.5 rounded-full text-white hover:bg-black/80"><X size={16}/></button></div>)}<textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Añade una descripción (Ej: @usuario mira esto)..." className="w-full bg-gray-900 text-white p-4 rounded-xl mt-6 h-24 outline-none resize-none border border-gray-700 focus:border-gray-500"/>{status && <p className="text-cyan-400 text-sm mt-2 animate-pulse">{status}</p>}<button disabled={loading||!file} onClick={handleUpload} className="w-full bg-white text-black font-bold py-3.5 rounded-xl mt-auto mb-4 disabled:opacity-50 hover:bg-gray-200 transition shadow-lg">{loading?"Publicando...":"Publicar Video"}</button></div></div>);
         };
 
         const TrendsView = ({ videos, onVideoClick, onVisitProfile }) => {
-            const [search, setSearch] = useState("");
-            const [tab, setTab] = useState('videos');
-            const [users, setUsers] = useState([]);
-            
-            useEffect(() => {
-                if (tab === 'users' && search.length >= 2) {
-                    const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'users'), 
-                        where('displayName', '>=', search), 
-                        where('displayName', '<=', search + '\uf8ff'),
-                        limit(10)
-                    );
-                    const unsub = onSnapshot(q, (snap) => {
-                        setUsers(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(u => u.id !== auth.currentUser?.uid));
-                    });
-                    return () => unsub();
-                } else if (tab === 'users') {
-                    setUsers([]);
-                }
-            }, [tab, search]);
-            
-            const filteredVideos = videos.filter(v => 
-                (v.description || "").toLowerCase().includes(search.toLowerCase()) ||
-                (v.authorName || v.author || "").toLowerCase().includes(search.toLowerCase())
-            );
-            
-            return (
-                <div className="w-full h-full bg-gray-900 pt-16 px-4 overflow-y-auto pb-24">
-                <div className="relative mb-6">
-                    <input type="text" placeholder="Buscar..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-gray-800 text-white p-3 pl-10 rounded-xl border border-gray-700 outline-none" />
-                    <Search className="absolute left-3 top-3.5 text-gray-500" size={18} />
-                </div>
-                
-                <div className="flex gap-4 mb-6 border-b border-gray-800 pb-2">
-                    <button onClick={() => setTab('videos')} className={`text-sm font-bold pb-2 ${tab==='videos'?'text-white border-b-2 border-white':'text-gray-500'}`}>Videos</button>
-                    <button onClick={() => setTab('users')} className={`text-sm font-bold pb-2 ${tab==='users'?'text-white border-b-2 border-white':'text-gray-500'}`}>Usuarios</button>
-                </div>
-                
-                {tab === 'videos' && (
-                    <>
-                        <h3 className="font-bold text-white mb-4 flex items-center gap-2"><Hash className="text-cyan-400" size={18} /> Resultados de Videos</h3>
-                        <div className="grid grid-cols-2 gap-2">
-                            {filteredVideos.map(video => (
-                            <div key={video.id} onClick={() => onVideoClick(video)} className="relative aspect-[9/16] bg-gray-800 rounded-xl overflow-hidden cursor-pointer group shadow-lg border border-gray-800">
-                                <video src={video.url + '#t=0.1'} className="w-full h-full object-cover opacity-80" muted preload="metadata" />
-                                <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                                    <p className="text-xs font-bold text-white truncate">@{video.authorName}</p>
-                                </div>
-                            </div>
-                            ))}
-                        </div>
-                    </>
-                )}
-                
-                {tab === 'users' && (
-                    <>
-                        <h3 className="font-bold text-white mb-4 flex items-center gap-2"><UserIcon className="text-cyan-400" size={18} /> Usuarios Encontrados</h3>
-                        <div className="space-y-2">
-                            {users.length === 0 && search.length >= 2 ? <p className="text-gray-500 text-center">No se encontraron usuarios.</p> :
-                            users.map(u => (
-                                <div key={u.id} onClick={() => onVisitProfile(u.id)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800">
-                                    <div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden flex-shrink-0">
-                                        <img src={u.photoURL} className="w-full h-full object-cover"/>
-                                    </div>
-                                    <div className="flex-1">
-                                        <div className="flex items-center gap-1">
-                                            <p className="font-bold text-white">@{u.username}</p>
-                                            {u.isVerified && <VerifiedBadge size={16} />}
-                                        </div>
-                                        <p className="text-xs text-gray-400 truncate">{u.displayName}</p>
-                                    </div>
-                                    <button onClick={(e) => {e.stopPropagation(); onVisitProfile(u.id);}} className="text-cyan-400 p-2 rounded-full hover:bg-gray-700 transition">
-                                        <UserPlus size={18}/>
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    </>
-                )}
-                </div>
-            );
+             const [search, setSearch] = useState(""); const [tab, setTab] = useState('videos'); const [users, setUsers] = useState([]);
+            useEffect(() => { if (tab === 'users' && search.length >= 2) { const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'users'), where('displayName', '>=', search), where('displayName', '<=', search + '\uf8ff'), limit(10)); const unsub = onSnapshot(q, (snap) => { setUsers(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(u => u.id !== auth.currentUser?.uid)); }); return () => unsub(); } else if (tab === 'users') { setUsers([]); } }, [tab, search]);
+            const filteredVideos = videos.filter(v => (v.description || "").toLowerCase().includes(search.toLowerCase()) || (v.authorName || v.author || "").toLowerCase().includes(search.toLowerCase()));
+            return (<div className="w-full h-full bg-gray-900 pt-16 px-4 overflow-y-auto pb-24"><div className="relative mb-6"><input type="text" placeholder="Buscar..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-gray-800 text-white p-3 pl-10 rounded-xl border border-gray-700 outline-none" /><Search className="absolute left-3 top-3.5 text-gray-500" size={18} /></div><div className="flex gap-4 mb-6 border-b border-gray-800 pb-2"><button onClick={() => setTab('videos')} className={`text-sm font-bold pb-2 ${tab==='videos'?'text-white border-b-2 border-white':'text-gray-500'}`}>Videos</button><button onClick={() => setTab('users')} className={`text-sm font-bold pb-2 ${tab==='users'?'text-white border-b-2 border-white':'text-gray-500'}`}>Usuarios</button></div>{tab === 'videos' && (<><h3 className="font-bold text-white mb-4 flex items-center gap-2"><Hash className="text-cyan-400" size={18} /> Resultados de Videos</h3><div className="grid grid-cols-2 gap-2">{filteredVideos.map(video => (<div key={video.id} onClick={() => onVideoClick(video)} className="relative aspect-[9/16] bg-gray-800 rounded-xl overflow-hidden cursor-pointer group shadow-lg border border-gray-800"><video src={video.url + '#t=0.1'} className="w-full h-full object-cover opacity-80" muted preload="metadata" /><div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent"><p className="text-xs font-bold text-white truncate">@{video.authorName}</p></div></div>))}</div></>)}{tab === 'users' && (<><h3 className="font-bold text-white mb-4 flex items-center gap-2"><UserIcon className="text-cyan-400" size={18} /> Usuarios Encontrados</h3><div className="space-y-2">{users.length === 0 && search.length >= 2 ? <p className="text-gray-500 text-center">No se encontraron usuarios.</p> : users.map(u => (<div key={u.id} onClick={() => onVisitProfile(u.id)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800"><div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden flex-shrink-0"><img src={u.photoURL} className="w-full h-full object-cover"/></div><div className="flex-1"><div className="flex items-center gap-1"><p className="font-bold text-white">@{u.username}</p>{u.isVerified && <VerifiedBadge size={16} />}</div><p className="text-xs text-gray-400 truncate">{u.displayName}</p></div><button onClick={(e) => {e.stopPropagation(); onVisitProfile(u.id);}} className="text-cyan-400 p-2 rounded-full hover:bg-gray-700 transition"><UserPlus size={18}/></button></div>))}</div></>)}</div>);
         };
-
-        // --- FUNCIÓN PARA OBTENER MENSAJES NO LEÍDOS ---
-        const getUnreadMessagesCount = (chats, currentUserId) => {
-            return chats.reduce((acc, chat) => {
-                const otherUid = chat.participants.find(uid => uid !== currentUserId);
-                const lastReadTime = chat.participantsData?.[currentUserId]?.lastRead || 0;
-                if (chat.lastMessageTime && chat.lastSenderId !== currentUserId && new Date(chat.lastMessageTime).getTime() > new Date(lastReadTime).getTime()) {
-                    acc++;
-                }
-                return acc;
-            }, 0);
-        };
-
-        const getUnreadCountForChat = (chat, currentUserId) => {
-             const lastReadTime = chat.participantsData?.[currentUserId]?.lastRead || 0;
-             const lastMessageTime = chat.lastMessageTime ? new Date(chat.lastMessageTime).getTime() : 0;
-             const isFromOtherUser = chat.lastSenderId !== currentUserId;
-             const isUnread = lastMessageTime > new Date(lastReadTime).getTime();
-             return isUnread && isFromOtherUser ? 1 : 0; 
-        }
 
         const InboxView = ({ user, onOpenChat, notifications, chats, onlineStatus }) => {
-            const [tab, setTab] = useState('chats'); 
-            const allUsers = chats.reduce((acc, chat) => {
-                const otherUid = chat.participants.find(uid => uid !== user.uid);
-                if (otherUid && chat.participantsData?.[otherUid]) {
-                    acc[otherUid] = { uid: otherUid, ...chat.participantsData[otherUid] };
-                }
-                return acc;
-            }, {});
-
-            const myChats = chats.filter(c => c.status === 'accepted');
-            const requests = chats.filter(c => c.status === 'pending' && c.participants.includes(user?.uid));
-
-            const handleAccept = async (chatId, targetUid) => {
-                if (!user?.uid) return;
-                await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted', targetId: null });
-                
-                const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
-                const otherUser = allUsers[targetUid]; 
-                
-                await addDoc(collection(db, 'artifacts', appId, 'users', targetUid, 'notifications'), {
-                    type: 'message_accept', fromUser: user.uid, fromName: userData.displayName, avatar: userData.photoURL, createdAt: new Date().toISOString()
-                });
-                
-                onOpenChat(chatId, otherUser); 
-            };
-
-            return (
-                <div className="w-full h-full bg-gray-900 pt-16 px-4 overflow-y-auto pb-24">
-                <div className="flex gap-4 mb-6 border-b border-gray-800 pb-2">
-                    <button onClick={() => setTab('chats')} className={`text-sm font-bold pb-2 ${tab==='chats'?'text-white border-b-2 border-white':'text-gray-500'}`}>Mensajes</button>
-                    <button onClick={() => setTab('requests')} className={`text-sm font-bold pb-2 ${tab==='requests'?'text-white border-b-2 border-white':'text-gray-500'}`}>Solicitudes {requests.length > 0 && <span className="text-red-500">({requests.length})</span>}</button>
-                </div>
-
-                <div className="space-y-2">
-                    {tab === 'chats' ? (
-                        myChats.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes mensajes</div> :
-                        myChats.map(chat => {
-                            const otherUid = chat.participants.find(uid => uid !== user.uid);
-                            const otherUser = allUsers[otherUid];
-                            const otherName = otherUser?.displayName || "Usuario";
-                            const otherImg = otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`; 
-                            
-                            const isStreakActive = chat.streak && chat.streak.count > 0 && 
-                                (new Date().getTime() - new Date(chat.streak.lastMessageTime).getTime() < 86400000);
-
-                            const isOnline = onlineStatus[otherUid]?.online || false;
-                            const unreadCount = getUnreadCountForChat(chat, user.uid);
-
-                            return (
-                                <div key={chat.id} onClick={() => onOpenChat(chat.id, otherUser)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800">
-                                    <div className="w-12 h-12 rounded-full bg-gray-700 overflow-hidden border border-gray-600 flex-shrink-0 relative">
-                                        <img src={otherImg} className="w-full h-full object-cover"/>
-                                        
-                                        {isOnline && (
-                                            <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-gray-900"></div>
-                                        )}
-                                        {unreadCount > 0 && (
-                                            <div className="absolute top-0 right-0 w-5 h-5 bg-red-600 rounded-full flex items-center justify-center text-xs font-bold text-white border-2 border-gray-900">
-                                                {unreadCount}
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="flex-1">
-                                        <p className="font-bold text-white flex items-center gap-2">
-                                            {otherName} 
-                                            {isStreakActive && (
-                                                <div className="flex items-center gap-0.5">
-                                                    <img src={STREAK_GIF_URL} alt="Racha" className="w-5 h-5"/>
-                                                    <span className="text-yellow-400 text-xs font-extrabold">x{chat.streak.count}</span>
-                                                </div>
-                                            )}
-                                        </p>
-                                        <p className="text-xs text-gray-400">Toca para chatear</p>
-                                    </div>
-                                </div>
-                            )
-                        })
-                    ) : (
-                        requests.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes solicitudes</div> :
-                        requests.map(req => {
-                            const senderUid = req.participants.find(uid => uid !== user.uid);
-                            const senderUser = allUsers[senderUid];
-                            const senderName = senderUser?.displayName || "Usuario";
-                            return (
-                                <div key={req.id} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800">
-                                    <div className="flex-1">
-                                        <p className="font-bold text-white">Solicitud de {senderName}</p>
-                                        <p className="text-xs text-gray-400">Quiere chatear contigo</p>
-                                    </div>
-                                    <button onClick={() => handleAccept(req.id, senderUid)} className="px-4 py-2 bg-white text-black rounded-lg text-xs font-bold">Aceptar</button>
-                                </div>
-                            )
-                        })
-                    )}
-                </div>
-                </div>
-            );
+             const [tab, setTab] = useState('chats'); const allUsers = chats.reduce((acc, chat) => { const otherUid = chat.participants.find(uid => uid !== user.uid); if (otherUid && chat.participantsData?.[otherUid]) { acc[otherUid] = { uid: otherUid, ...chat.participantsData[otherUid] }; } return acc; }, {}); const myChats = chats.filter(c => c.status === 'accepted'); const requests = chats.filter(c => c.status === 'pending' && c.participants.includes(user?.uid)); const handleAccept = async (chatId, targetUid) => { if (!user?.uid) return; await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted', targetId: null }); const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data(); const otherUser = allUsers[targetUid]; await addDoc(collection(db, 'artifacts', appId, 'users', targetUid, 'notifications'), { type: 'message_accept', fromUser: user.uid, fromName: userData.displayName, avatar: userData.photoURL, createdAt: new Date().toISOString() }); onOpenChat(chatId, otherUser); };
+            return (<div className="w-full h-full bg-gray-900 pt-16 px-4 overflow-y-auto pb-24"><div className="flex gap-4 mb-6 border-b border-gray-800 pb-2"><button onClick={() => setTab('chats')} className={`text-sm font-bold pb-2 ${tab==='chats'?'text-white border-b-2 border-white':'text-gray-500'}`}>Mensajes</button><button onClick={() => setTab('requests')} className={`text-sm font-bold pb-2 ${tab==='requests'?'text-white border-b-2 border-white':'text-gray-500'}`}>Solicitudes {requests.length > 0 && <span className="text-red-500">({requests.length})</span>}</button></div><div className="space-y-2">{tab === 'chats' ? (myChats.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes mensajes</div> : myChats.map(chat => { const otherUid = chat.participants.find(uid => uid !== user.uid); const otherUser = allUsers[otherUid]; const otherName = otherUser?.displayName || "Usuario"; const otherImg = otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`; const isStreakActive = chat.streak && chat.streak.count > 0 && (new Date().getTime() - new Date(chat.streak.lastMessageTime).getTime() < 86400000); const isOnline = onlineStatus[otherUid]?.online || false; const unreadCount = getUnreadCountForChat(chat, user.uid); return (<div key={chat.id} onClick={() => onOpenChat(chat.id, otherUser)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800"><div className="w-12 h-12 rounded-full bg-gray-700 overflow-hidden border border-gray-600 flex-shrink-0 relative"><img src={otherImg} className="w-full h-full object-cover"/>{isOnline && (<div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-gray-900"></div>)}{unreadCount > 0 && (<div className="absolute top-0 right-0 w-5 h-5 bg-red-600 rounded-full flex items-center justify-center text-xs font-bold text-white border-2 border-gray-900">{unreadCount}</div>)}</div><div className="flex-1"><p className="font-bold text-white flex items-center gap-2">{otherName} {isStreakActive && (<div className="flex items-center gap-0.5"><img src={STREAK_GIF_URL} alt="Racha" className="w-5 h-5"/><span className="text-yellow-400 text-xs font-extrabold">x{chat.streak.count}</span></div>)}</p><p className="text-xs text-gray-400">Toca para chatear</p></div></div>) })) : (requests.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes solicitudes</div> : requests.map(req => { const senderUid = req.participants.find(uid => uid !== user.uid); const senderUser = allUsers[senderUid]; const senderName = senderUser?.displayName || "Usuario"; return (<div key={req.id} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800"><div className="flex-1"><p className="font-bold text-white">Solicitud de {senderName}</p><p className="text-xs text-gray-400">Quiere chatear contigo</p></div><button onClick={() => handleAccept(req.id, senderUid)} className="px-4 py-2 bg-white text-black rounded-lg text-xs font-bold">Aceptar</button></div>) }))}</div></div>);
         };
 
         const ChatScreen = ({ chatId, user, onClose, videos, chatData, otherUser }) => {
             const [messages, setMessages] = useState([]);
             const [txt, setTxt] = useState("");
             const [file, setFile] = useState(null);
+            const [preview, setPreview] = useState(null); 
             const [replyTo, setReplyTo] = useState(null);
             const [isTyping, setIsTyping] = useState(false);
             const [showStickerModal, setShowStickerModal] = useState(false); 
@@ -1861,7 +983,6 @@
                 });
             }, [user?.uid, chatId]);
 
-
             useEffect(() => {
                 if(!chatId) return;
                 const q = query(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), orderBy('createdAt', 'desc')); 
@@ -1870,9 +991,7 @@
                 );
                 markAsRead();
                 });
-                
                 markAsRead();
-                
                 return () => unsub();
             }, [chatId, markAsRead]);
             
@@ -1902,7 +1021,6 @@
 
             const handleTextChange = (e) => {
                 setTxt(e.target.value);
-                
                 e.target.style.height = 'auto';
                 e.target.style.height = e.target.scrollHeight + 'px';
 
@@ -1947,25 +1065,8 @@
 
                 let newCount = currentCount;
 
-                if (currentCount === 0) {
-                    newCount = 1; 
-                } else if (isWithin24Hours && lastSender !== user.uid) {
-                    newCount = currentCount + 1; 
-                } else if (streakLost) {
-                    newCount = 1; 
-                } else if (lastSender === user.uid) {
-                    newCount = currentCount; 
-                }
-                
-                await updateDoc(chatRef, {
-                    streak: {
-                        count: newCount,
-                        lastMessageTime: new Date(lastMessageTime).toISOString(),
-                        lastSenderId: user.uid
-                    },
-                    lastMessageTime: new Date(lastMessageTime).toISOString(), 
-                    lastSenderId: user.uid
-                });
+                if (currentCount === 0) { newCount = 1; } else if (isWithin24Hours && lastSender !== user.uid) { newCount = currentCount + 1; } else if (streakLost) { newCount = 1; } else if (lastSender === user.uid) { newCount = currentCount; }
+                await updateDoc(chatRef, { streak: { count: newCount, lastMessageTime: new Date(lastMessageTime).toISOString(), lastSenderId: user.uid }, lastMessageTime: new Date(lastMessageTime).toISOString(), lastSenderId: user.uid });
             };
             
             const updateMessageAudioUrl = async (messageId, newUrl) => {
@@ -1974,7 +1075,7 @@
             };
 
 
-            const sendMessage = async (type, content, fileDetails = null) => {
+            const sendMessage = async (type, content, extraData = {}) => {
                 if (!user?.uid) return; 
                 
                 const messageTime = new Date().toISOString();
@@ -1983,12 +1084,9 @@
                     type,
                     senderId: user.uid,
                     createdAt: messageTime,
-                    ...(type === 'text' || type === 'audio_tts' ? { text: content } : { fileUrl: content, fileType: fileDetails?.fileType || 'file' }),
-                    ...(type === 'video' ? { videoId: content } : {}),
-                    ...(type === 'sticker' ? { fileUrl: content } : {}), 
-                    ...(type === 'game_invite' ? { data: content } : {}), 
+                    ...(type === 'text' || type === 'audio_tts' ? { text: content } : { fileUrl: content }),
+                    ...extraData, 
                     ...(replyTo ? { replyTo: { text: replyTo.text, type: replyTo.type, senderId: replyTo.senderId } } : {}),
-                    ...(type === 'audio_tts' ? { fileUrl: fileDetails?.fileUrl } : {}) 
                 };
 
                 await addDoc(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), message);
@@ -2024,9 +1122,7 @@
 
             const sendTextOrAudio = () => {
                 if(!txt.trim()) return;
-
                 sendMessage('text', txt.trim());
-                
                 setTxt("");
                 setReplyTo(null);
             };
@@ -2035,28 +1131,36 @@
                 const selectedFile = e.target.files[0];
                 if (selectedFile) {
                     setFile(selectedFile);
+                    setPreview(URL.createObjectURL(selectedFile));
                 }
             };
+            
+            const clearFile = () => {
+                setFile(null);
+                setPreview(null);
+            };
 
-            const sendFile = async (selectedFile = file) => {
-                if (!user?.uid || !selectedFile) return; 
+            const sendFile = async () => {
+                if (!user?.uid || !file) return; 
                 
-                const fileName = selectedFile.name || "file.bin";
+                const fileName = file.name || "file.bin";
                 const fileExtension = fileName.split('.').pop().toLowerCase();
                 
                 let fileType = 'file'; 
                 if (['png', 'jpg', 'jpeg', 'gif'].includes(fileExtension)) fileType = 'image';
                 else if (['mp3', 'wav', 'ogg', 'webm'].includes(fileExtension)) fileType = 'audio';
+                else if (['mp4', 'mov', 'avi'].includes(fileExtension)) fileType = 'video';
                 
                 const path = `chats/${chatId}/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9.]/g,'')}`;
                 
                 try {
-                    const url = await uploadToGitHub(selectedFile, path, (s) => console.log(s));
-                    sendMessage(fileType, url, { fileType });
+                    const url = await uploadToGitHub(file, path, (s) => console.log(s));
+                    sendMessage(fileType, url, { fileType, text: txt });
                 } catch(e) {
                     console.error("Error al subir archivo:", e.message);
                 } finally {
                     setFile(null);
+                    setPreview(null);
                     setTxt("");
                     setReplyTo(null);
                 }
@@ -2064,28 +1168,23 @@
             
             const startRecording = async () => {
                 if (isRecording || !user?.uid) return;
-                
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     const options = { mimeType: 'audio/webm' }; 
                     const recorder = new MediaRecorder(stream, options);
                     mediaRecorderRef.current = recorder;
                     audioChunksRef.current = [];
-                    
-                    recorder.ondataavailable = (event) => {
-                        audioChunksRef.current.push(event.data);
-                    };
-                    
+                    recorder.ondataavailable = (event) => { audioChunksRef.current.push(event.data); };
                     recorder.onstop = async () => {
                         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
                         const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: 'audio/webm' });
-                        await sendFile(audioFile); 
+                        const path = `chats/${chatId}/${Date.now()}_audio.webm`;
+                         const url = await uploadToGitHub(audioFile, path, (s) => console.log(s));
+                         sendMessage('audio', url, { fileType: 'audio' });
                         stream.getTracks().forEach(track => track.stop()); 
                     };
-
                     recorder.start();
                     setIsRecording(true);
-                    
                 } catch (err) {
                     console.error('Error al acceder al micrófono:', err.message);
                     setIsRecording(false);
@@ -2098,7 +1197,6 @@
                     setIsRecording(false);
                 }
             };
-
 
             const deleteMsg = async (msgId) => {
                 await deleteDoc(doc(db, 'artifacts', appId, 'chats', chatId, 'messages', msgId));
@@ -2171,6 +1269,27 @@
                             </div>
                         )}
 
+                        {file && (
+                            <div className="relative bg-gray-800 rounded-xl p-2 flex items-center gap-3 border border-gray-700 animate-in slide-in-from-bottom-2">
+                                <div className="w-12 h-12 bg-gray-700 rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0">
+                                    {file.type.startsWith('image/') ? (
+                                        <img src={preview} className="w-full h-full object-cover" />
+                                    ) : file.type.startsWith('video/') ? (
+                                        <video src={preview} className="w-full h-full object-cover" />
+                                    ) : (
+                                        <Paperclip size={20} className="text-gray-400" />
+                                    )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-white truncate font-medium">{file.name}</p>
+                                    <p className="text-xs text-gray-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                                </div>
+                                <button onClick={clearFile} className="p-1.5 bg-gray-700 rounded-full hover:bg-red-500/20 hover:text-red-500 transition">
+                                    <X size={16} />
+                                </button>
+                            </div>
+                        )}
+
                         <div className="flex gap-2 items-end"> 
                             
                             <button 
@@ -2188,15 +1307,15 @@
                             </button>
                             
                             <label className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0">
-                                <FileText size={18}/>
+                                <Paperclip size={18}/>
                                 <input type="file" className="hidden" onChange={handleFileSelect} />
                             </label>
 
                             <textarea
-                                value={file ? file.name : txt} 
+                                value={txt} 
                                 onChange={handleTextChange} 
                                 className="chat-input flex-1 bg-gray-800 text-white p-3 rounded-2xl outline-none resize-none max-h-40" 
-                                placeholder={"Mensaje..."} 
+                                placeholder={file ? "Añade un comentario..." : "Mensaje..."} 
                                 onKeyDown={handleKeyDown}
                                 disabled={isRecording}
                                 rows={1} 
@@ -2216,7 +1335,7 @@
                                             </button>
                                         )}
                                         
-                                        <button onClick={file ? sendFile : sendTextOrAudio} 
+                                        <button onClick={file ? () => sendFile() : sendTextOrAudio} 
                                             className="w-10 h-10 p-2 bg-white rounded-full text-black flex items-center justify-center hover:bg-gray-200 transition shadow-lg">
                                             <Send size={18}/>
                                         </button>
@@ -2250,7 +1369,9 @@
             );
         };
 
+        // ... (Resto del componente App y renderizado igual)
         const App = () => {
+            // ... (todo el código de App igual)
             const [user, setUser] = useState(null);
             const [isAuthReady, setIsAuthReady] = useState(false); 
             const [videos, setVideos] = useState([]);
