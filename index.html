@@ -290,7 +290,7 @@
             const configSnap = await getDoc(configRef);
             if (!configSnap.exists()) throw new Error("Falta configuración GitHub");
             const { token, owner, repo } = configSnap.data();
-            // Eliminado el mensaje de "Procesando archivo..."
+            
             const toBase64 = (file) => new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(file);
@@ -298,7 +298,7 @@
                 reader.onerror = reject;
             });
             const content = await toBase64(file);
-            // Eliminado el mensaje de "Subiendo a GitHub..."
+            
             const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
                 method: 'PUT',
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -308,20 +308,20 @@
                 const errorBody = await response.json();
                  throw new Error(`Error GitHub: ${errorBody.message || response.statusText}`);
             }
-            // Eliminado el mensaje de "Subida completa!"
+            
             return `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
         };
 
         const getChatId = (uid1, uid2) => [uid1, uid2].sort().join('_');
 
-        // --- COMPONENTE AUDIO PLAYER (BONITO) ---
+        // --- COMPONENTE AUDIO PLAYER (FIXED) ---
         const AudioMessage = ({ audioUrl, isMe, onGeneration, text }) => {
-            const audioRef = useRef(new Audio(audioUrl));
+            const audioRef = useRef(new Audio());
             const [isPlaying, setIsPlaying] = useState(false);
-            // Si el mensaje es audio de micrófono/imagen/sticker, fileUrl existe y no intentamos TTS.
-            // Solo intentamos TTS si NO hay fileUrl y el texto es largo.
+            
+            // Si es texto largo y no hay URL, necesitamos TTS
             const needsTTS = !audioUrl && text?.length > 100;
-            const [isLoading, setIsLoading] = useState(needsTTS); 
+            const [isLoading, setIsLoading] = useState(!!audioUrl || needsTTS); // Carga inicial si hay URL o necesita TTS
             const [error, setError] = useState(null);
             
             // Simulación de la forma de onda
@@ -329,16 +329,52 @@
                 <div key={i} className="waveform-bar" style={{height: `${Math.random() * 80 + 20}%`}}></div>
             ));
 
-            // Generar audio si no hay URL y es un mensaje de texto largo (TTS)
+            // EFECTO: Manejar la URL del audio (FIXED)
+            // Descargamos el audio como Blob para evitar problemas de MIME type con GitHub
             useEffect(() => {
-                if (audioUrl) {
-                    audioRef.current.src = audioUrl;
-                    setIsLoading(false);
-                    return;
-                }
-                
-                if (!needsTTS) {
-                    setIsLoading(false);
+                if (!audioUrl) return;
+
+                let active = true;
+                setIsLoading(true);
+
+                const loadAudio = async () => {
+                    try {
+                        const response = await fetch(audioUrl);
+                        if (!response.ok) throw new Error("No se pudo cargar el audio");
+                        const blob = await response.blob();
+                        const objectUrl = URL.createObjectURL(blob);
+                        
+                        if (active) {
+                            if (audioRef.current) {
+                                audioRef.current.pause();
+                                audioRef.current.src = objectUrl;
+                                audioRef.current.load();
+                            }
+                            setIsLoading(false);
+                        }
+                    } catch (e) {
+                        if (active) {
+                            console.error("Error audio playback:", e);
+                            setError("No se puede reproducir");
+                            setIsLoading(false);
+                        }
+                    }
+                };
+
+                loadAudio();
+
+                return () => {
+                    active = false;
+                    if (audioRef.current && audioRef.current.src) {
+                        URL.revokeObjectURL(audioRef.current.src);
+                    }
+                };
+            }, [audioUrl]);
+
+            // EFECTO: Generar audio TTS si es necesario
+            useEffect(() => {
+                if (audioUrl || !needsTTS) {
+                    if (!audioUrl) setIsLoading(false);
                     return;
                 }
                 
@@ -363,14 +399,14 @@
                     
                     try {
                         let response;
-                        for (let i = 0; i < 3; i++) { // Intento de reintento
+                        for (let i = 0; i < 3; i++) { 
                             response = await fetch(apiUrl, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(payload)
                             });
                             if (response.ok) break;
-                            await new Promise(resolve => setTimeout(resolve, 2 ** i * 1000)); // Espera exponencial
+                            await new Promise(resolve => setTimeout(resolve, 2 ** i * 1000)); 
                         }
                         
                         if (!response.ok) throw new Error("Error de API: " + response.statusText);
@@ -381,7 +417,6 @@
                         const mimeType = part?.inlineData?.mimeType;
 
                         if (audioData && mimeType && mimeType.startsWith("audio/L16")) {
-                            // Extraer sample rate de mimeType
                             const match = mimeType.match(/rate=(\d+)/);
                             const sampleRate = match ? parseInt(match[1], 10) : 24000; 
 
@@ -390,25 +425,27 @@
                             const wavBlob = pcmToWav(pcm16, sampleRate);
                             const newAudioUrl = URL.createObjectURL(wavBlob);
                             
-                            audioRef.current.src = newAudioUrl;
-                            onGeneration(newAudioUrl); // Devuelve la URL al padre para guardarla en Firestore
+                            // Aquí asignamos directamente el blob generado
+                            if(audioRef.current) {
+                                audioRef.current.src = newAudioUrl;
+                            }
+                            onGeneration(newAudioUrl); 
                             
                         } else {
                             throw new Error("Respuesta de audio no válida.");
                         }
                     } catch (e) {
-                        setError("Falló la generación de audio: " + e.message);
-                        onGeneration(null); // Notificar error al padre
+                        setError("Falló la generación de audio");
+                        onGeneration(null); 
                     } finally {
                         setIsLoading(false);
                     }
                 };
 
-                // Solamente generamos si needsTTS es true y estamos en estado de carga
-                if (needsTTS && isLoading) {
+                if (needsTTS) {
                     generateAndSetAudio();
                 }
-            }, [text, audioUrl, onGeneration, needsTTS, isLoading]);
+            }, [text, audioUrl, onGeneration, needsTTS]);
 
 
             useEffect(() => {
@@ -419,12 +456,8 @@
                 return () => {
                     audio.removeEventListener('ended', onEnded);
                     audio.removeEventListener('pause', onEnded);
-                    // Limpieza del objeto URL
-                    if (audioRef.current && audioRef.current.src && audioRef.current.src.startsWith('blob:')) {
-                        URL.revokeObjectURL(audioRef.current.src);
-                    }
                 };
-            }, [audioUrl]);
+            }, []);
 
             const togglePlay = () => {
                 const audio = audioRef.current;
@@ -433,7 +466,10 @@
                 if (isPlaying) {
                     audio.pause();
                 } else {
-                    audio.play().catch(e => setError("Error al reproducir: " + e.message));
+                    audio.play().catch(e => {
+                        console.error("Error al reproducir:", e);
+                        setError("Error reprod.");
+                    });
                 }
                 setIsPlaying(!isPlaying);
             };
@@ -445,7 +481,7 @@
                 return (
                     <div className="flex items-center gap-2 p-2 bg-gray-800 rounded-xl text-xs text-gray-400">
                         <Loader2 size={16} className="animate-spin" />
-                        <span>Generando audio...</span>
+                        <span>Cargando audio...</span>
                     </div>
                 );
             }
@@ -454,7 +490,7 @@
                 return (
                     <div className="flex items-center gap-2 p-3 bg-red-800/50 rounded-xl text-xs text-red-300">
                         <AlertTriangle size={16} />
-                        <span>Error de audio</span>
+                        <span>{error}</span>
                     </div>
                 );
             }
@@ -476,7 +512,7 @@
                         {bars}
                     </div>
                     <span className="text-white text-xs whitespace-nowrap">
-                        {isPlaying ? 'Reproduciendo...' : 'Toca para oír'}
+                        {isPlaying ? 'Oyendo...' : 'Toca para oír'}
                     </span>
                 </div>
             );
@@ -520,13 +556,12 @@
             />
         );
         
-        // --- CHAT: COMPONENTE DE INVITACIÓN A JUEGO (NUEVO) ---
+        // --- CHAT: COMPONENTE DE INVITACIÓN A JUEGO ---
         const GameInviteMessage = ({ data, isMe }) => {
             const game = GAMES_CONFIG.find(g => g.name === data.gameName) || { name: "Juego Desconocido", color: "bg-gray-500", logo: "" };
             
             const handleJoin = (e) => {
                 e.stopPropagation();
-                // Abrir el enlace en una nueva pestaña (simulación de unirse)
                 window.open(data.inviteLink, '_blank');
             };
 
@@ -576,10 +611,9 @@
                     className="chat-video-container bg-black/50 shadow-xl"
                     onClick={togglePlay}
                 >
-                    {/* El video debe cargarse desde el principio, ya que el link del video es una fuente válida */}
                     <video
                         ref={videoRef}
-                        src={video.url + '#t=0.1'} // Usamos #t=0.1 para obtener el frame inicial
+                        src={video.url + '#t=0.1'} 
                         className="w-full h-full object-cover transition-opacity duration-300"
                         muted={!isPlaying}
                         loop
@@ -602,37 +636,31 @@
             );
         };
         
-        // --- CHAT: COMPONENTE DE MENSAJE CON MENÚ DE CONTEXTO ---
+        // --- CHAT: COMPONENTE DE MENSAJE CON MENÚ DE CONTEXTO (FIX: BOTÓN RESPONDER) ---
         const MessageBubble = ({ message, isMe, onDelete, onReply, videos, onUpdateAudioUrl }) => {
             const [showMenu, setShowMenu] = useState(false);
             const pressTimer = useRef(null);
             
-            // Buscar la información completa del video (necesaria para la miniatura)
             const video = message.type === 'video' ? videos.find(v => v.id === message.videoId) : null;
             
-            // Función para actualizar el audio generado en Firestore
             const handleAudioUrlUpdate = async (newUrl) => {
-                // Solo actualiza si es un mensaje de texto que se convirtió en audio TTS
                 if (message.type === 'text' && !message.fileUrl) {
                     await updateDoc(doc(db, 'artifacts', appId, 'chats', message.chatId, 'messages', message.id), { 
                         fileUrl: newUrl, 
-                        type: 'audio_tts' // Nuevo tipo para diferenciarlo del audio de micrófono
+                        type: 'audio_tts' 
                     });
                 }
             };
 
-            // Inicia el temporizador al presionar
             const handleMouseDown = (e) => {
-                if(e.button === 2) return; // Ignorar clic derecho
+                if(e.button === 2) return; 
                 clearTimeout(pressTimer.current);
                 pressTimer.current = setTimeout(() => {
                     setShowMenu(true);
-                    // Ocultar el menú después de un tiempo
                     setTimeout(() => setShowMenu(false), 5000); 
-                }, 500); // 500ms para "presionar"
+                }, 500); 
             };
 
-            // Cancela el temporizador al soltar
             const handleMouseUp = () => {
                 clearTimeout(pressTimer.current);
             };
@@ -642,59 +670,58 @@
             const isSticker = message.type === 'sticker';
             const isGameInvite = message.type === 'game_invite';
 
-            // Ajuste de posición del botón de respuesta para que esté pegado
-            const replyButtonPositionClass = isMe ? 'right-[100%] mr-2' : 'left-[100%] ml-2';
+            // --- LÓGICA DE POSICIÓN DEL BOTÓN DE RESPONDER MEJORADA ---
+            // Ahora usamos un contenedor relativo interno para que el botón se posicione RELATIVO AL MENSAJE, no a la pantalla.
+            // right-full mueve el botón el 100% de su propio ancho/contenedor a la izquierda.
+            // mr-2 añade separación.
 
             if (isSticker) {
-                // Los stickers no tienen burbuja ni menú contextual (solo eliminar)
-                return (
+                 return (
                     <div 
-                        className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative group`}
-                        onMouseDown={handleMouseDown}
-                        onMouseUp={handleMouseUp}
-                        onTouchStart={handleMouseDown}
-                        onTouchEnd={handleMouseUp}
+                        className={`flex ${isMe ? 'justify-end' : 'justify-start'} group w-full`}
+                        onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}
+                        onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}
                         onTouchCancel={handleMouseUp}
                     >
-                        {/* Botón de Eliminar (Solo para el dueño) */}
-                        {isMe && (
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
-                                className={`absolute z-20 transition-all duration-200 p-1 bg-red-600 border border-red-800 rounded-full text-white shadow-lg hover:bg-red-700 top-1/2 -translate-y-1/2 
-                                    left-[-20px] 
-                                    ${showMenu ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-3'}`}
-                            >
-                                <X size={16}/>
-                            </button>
-                        )}
-                        <StickerMessage stickerUrl={message.fileUrl} />
+                        <div className="relative">
+                             {/* Botón de Eliminar (Solo para el dueño) */}
+                            {isMe && (
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
+                                    className={`absolute z-20 transition-all duration-200 p-1 bg-red-600 border border-red-800 rounded-full text-white shadow-lg hover:bg-red-700 top-1/2 -translate-y-1/2 
+                                        right-full mr-3
+                                        ${showMenu ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-3'}`}
+                                >
+                                    <X size={16}/>
+                                </button>
+                            )}
+                            <StickerMessage stickerUrl={message.fileUrl} />
+                        </div>
                     </div>
                 );
             }
 
-            // Para Game Invite, no permitimos respuesta/edición en la burbuja (solo eliminar si es tuyo)
             if (isGameInvite) {
                  return (
                     <div 
-                        className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative group`}
-                        onMouseDown={handleMouseDown}
-                        onMouseUp={handleMouseUp}
-                        onTouchStart={handleMouseDown}
-                        onTouchEnd={handleMouseUp}
+                         className={`flex ${isMe ? 'justify-end' : 'justify-start'} group w-full`}
+                        onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}
+                        onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}
                         onTouchCancel={handleMouseUp}
                     >
-                        {/* Botón de Eliminar (Solo para el dueño) */}
-                        {isMe && (
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
-                                className={`absolute z-20 transition-all duration-200 p-1 bg-red-600 border border-red-800 rounded-full text-white shadow-lg hover:bg-red-700 top-1/2 -translate-y-1/2 
-                                    left-[-20px] 
-                                    ${showMenu ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-3'}`}
-                            >
-                                <X size={16}/>
-                            </button>
-                        )}
-                        <GameInviteMessage data={message.data} isMe={isMe} />
+                         <div className="relative max-w-[85%]">
+                            {isMe && (
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
+                                    className={`absolute z-20 transition-all duration-200 p-1 bg-red-600 border border-red-800 rounded-full text-white shadow-lg hover:bg-red-700 top-1/2 -translate-y-1/2 
+                                        right-full mr-3
+                                        ${showMenu ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-3'}`}
+                                >
+                                    <X size={16}/>
+                                </button>
+                            )}
+                            <GameInviteMessage data={message.data} isMe={isMe} />
+                        </div>
                     </div>
                 );
             }
@@ -702,86 +729,84 @@
 
             return (
                 <div 
-                    className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative group`}
-                    // Usamos eventos de ratón/táctiles para mostrar el menú de acción
-                    onMouseDown={handleMouseDown}
-                    onMouseUp={handleMouseUp}
-                    onTouchStart={handleMouseDown}
-                    onTouchEnd={handleMouseUp}
+                    className={`flex ${isMe ? 'justify-end' : 'justify-start'} group w-full`}
+                    onMouseDown={handleMouseDown} onMouseUp={handleMouseUp}
+                    onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}
                     onTouchCancel={handleMouseUp}
                 >
-                    
-                    {/* Botón de Respuesta Rápida (Pegado al mensaje) */}
-                    <button 
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onReply(message); 
-                            setShowMenu(false);
-                        }} 
-                        // Posición relativa al final de la burbuja (left: 100% o right: 100%)
-                        className={`absolute z-20 transition-all duration-200 p-1 bg-gray-900 border border-gray-700 rounded-full shadow-lg text-white hover:bg-gray-800 top-1/2 -translate-y-1/2 
-                            ${replyButtonPositionClass}
-                            ${showMenu ? 'opacity-100' : 'opacity-0'}`}
-                    >
-                        {ICONS.reply({ size: 16 })}
-                    </button>
-
-                    {/* Botón de Eliminar (Solo para el dueño - posición opuesta) */}
-                    {isMe && (
+                    {/* Contenedor Relativo para que el botón se pegue a este bloque */}
+                    <div className={`relative max-w-[80%] ${isMe ? '' : ''}`}>
+                        
+                        {/* Botón de Respuesta Rápida (Pegado al mensaje) */}
+                        {/* Si es isMe (mensaje a la derecha), ponemos el botón a la IZQUIERDA (right-full). */}
+                        {/* Si NO es isMe (mensaje a la izquierda), ponemos el botón a la DERECHA (left-full). */}
                         <button 
-                            onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
-                            className={`absolute z-20 transition-all duration-200 p-1 bg-red-600 border border-red-800 rounded-full text-white shadow-lg hover:bg-red-700 top-1/2 -translate-y-1/2 
-                                left-[-20px] 
-                                ${showMenu ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-3'}`}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onReply(message); 
+                                setShowMenu(false);
+                            }} 
+                            className={`absolute z-20 transition-all duration-200 p-1.5 bg-gray-800 border border-gray-600 rounded-full shadow-xl text-white hover:bg-gray-700 top-1/2 -translate-y-1/2 
+                                ${isMe ? 'right-full mr-2' : 'left-full ml-2'}
+                                ${showMenu ? 'opacity-100 scale-100' : 'opacity-0 scale-0'}`}
                         >
-                            <X size={16}/>
+                            {ICONS.reply({ size: 14 })}
                         </button>
-                    )}
 
-
-                    <div 
-                        className={`max-w-[80%] p-3 rounded-2xl text-sm transition-all relative ${isMe ? 'bg-white text-black' : 'bg-gray-800 text-white'} ${showMenu ? 'shadow-lg ring-2 ring-cyan-500/50' : ''}`}
-                    >
-                        {/* Mensaje de respuesta (citado) */}
-                        {message.replyTo && (
-                            <div className="p-2 mb-2 bg-white/10 border-l-4 border-cyan-400 rounded-md text-xs text-gray-300">
-                                <p className="font-bold text-cyan-400">Respondiendo a {message.replyTo.senderId === auth.currentUser.uid ? 'tí' : 'otro'}</p>
-                                <p className="truncate italic">{message.replyTo.text || message.replyTo.type}</p>
-                            </div>
+                        {/* Botón de Eliminar (Solo para el dueño - posición opuesta al de reply, o junto a él si se prefiere, aquí lo dejo oculto por defecto en menu) */}
+                        {isMe && (
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); onDelete(message.id); setShowMenu(false); }} 
+                                className={`absolute z-20 transition-all duration-200 p-1 bg-red-600 border border-red-800 rounded-full text-white shadow-lg hover:bg-red-700 -top-2 -left-2
+                                    ${showMenu ? 'opacity-100 scale-100' : 'opacity-0 scale-0'}`}
+                            >
+                                <X size={12}/>
+                            </button>
                         )}
 
-                        {/* Contenido del mensaje: Audio Player o Texto simple */}
-                        {isAudioOrTTS || (message.type === 'text' && message.text?.length <= 100) ? (
-                            <AudioMessage 
-                                audioUrl={message.fileUrl} 
-                                isMe={isMe} 
-                                text={message.text}
-                                onGeneration={handleAudioUrlUpdate}
-                            />
-                        ) : null}
-                        
-                        {message.type === 'image' && (
-                            <img 
-                                src={message.fileUrl} 
-                                alt={isGif ? "GIF animado" : "Imagen"} 
-                                className={`max-w-full rounded-lg ${isGif ? 'max-h-60' : 'max-h-48'}`}
-                            />
-                        )}
-                        
-                        {message.type === 'file' && (
-                            <a href={message.fileUrl} target="_blank" className="flex items-center gap-2 text-cyan-400 hover:underline">
-                                <FileText size={16} className={isMe ? 'text-black' : 'text-white'}/> Archivo Adjunto
-                            </a>
-                        )}
+                        <div 
+                            className={`p-3 rounded-2xl text-sm transition-all relative ${isMe ? 'bg-white text-black' : 'bg-gray-800 text-white'} ${showMenu ? 'ring-2 ring-cyan-500/50' : ''}`}
+                        >
+                            {/* Mensaje de respuesta (citado) */}
+                            {message.replyTo && (
+                                <div className="p-2 mb-2 bg-white/10 border-l-4 border-cyan-400 rounded-md text-xs text-gray-500">
+                                    <p className="font-bold text-cyan-600">Respondiendo a {message.replyTo.senderId === auth.currentUser.uid ? 'tí' : 'otro'}</p>
+                                    <p className="truncate italic">{message.replyTo.text || message.replyTo.type}</p>
+                                </div>
+                            )}
 
-                        {/* Nueva previsualización de video en chat */}
-                        {message.type === 'video' && video && (
-                            <ChatVideoPreview video={video} isMe={isMe} />
-                        )}
+                            {/* Contenido del mensaje: Audio Player o Texto simple */}
+                            {isAudioOrTTS || (message.type === 'text' && message.text?.length <= 100) ? (
+                                <AudioMessage 
+                                    audioUrl={message.fileUrl} 
+                                    isMe={isMe} 
+                                    text={message.text}
+                                    onGeneration={handleAudioUrlUpdate}
+                                />
+                            ) : null}
+                            
+                            {message.type === 'image' && (
+                                <img 
+                                    src={message.fileUrl} 
+                                    alt={isGif ? "GIF animado" : "Imagen"} 
+                                    className={`max-w-full rounded-lg ${isGif ? 'max-h-60' : 'max-h-48'}`}
+                                />
+                            )}
+                            
+                            {message.type === 'file' && (
+                                <a href={message.fileUrl} target="_blank" className="flex items-center gap-2 text-cyan-600 hover:underline font-bold">
+                                    <FileText size={16} className={isMe ? 'text-black' : 'text-white'}/> Archivo Adjunto
+                                </a>
+                            )}
 
-                        {message.type === 'video' && !video && (
-                            <div className="text-gray-400 text-xs italic">Video no encontrado.</div>
-                        )}
+                            {message.type === 'video' && video && (
+                                <ChatVideoPreview video={video} isMe={isMe} />
+                            )}
+
+                            {message.type === 'video' && !video && (
+                                <div className="text-gray-400 text-xs italic">Video no encontrado.</div>
+                            )}
+                        </div>
                     </div>
                 </div>
             );
@@ -797,14 +822,12 @@
 
             useEffect(() => {
                 if (!isOpen || !video?.id) return;
-                // Escuchar los comentarios ordenados por fecha de creación ascendente
                 const q = query(
                     collection(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'comments'), 
                     orderBy('createdAt', 'asc')
                 );
                 const unsub = onSnapshot(q, s => {
                     setComments(s.docs.map(d => ({id: d.id, ...d.data()}))
-                        // Aseguramos que los IDs y avatares estén presentes, añadiendo 'isVerified'
                         .map(c => ({
                             ...c,
                             isVerified: c.isVerified || false,
@@ -815,7 +838,6 @@
                 return () => unsub();
             }, [isOpen, video?.id]);
 
-            // Scroll al final al cargar comentarios
             useEffect(() => {
                 if (commentsEndRef.current) {
                     commentsEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -825,7 +847,6 @@
             const handleSendComment = async () => {
                 if (!user?.uid || !newComment.trim()) return;
                 
-                // Obtener datos del usuario (incluyendo isVerified)
                 const userDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid));
                 const userData = userDoc.data() || {};
 
@@ -836,11 +857,10 @@
                     avatar: userData.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`,
                     text: newComment.trim(),
                     createdAt: serverTimestamp(),
-                    isVerified: userData.isVerified || false // Guardar el estado de verificado
+                    isVerified: userData.isVerified || false 
                 });
                 setNewComment('');
                 
-                // Actualizar contador de comentarios en el video principal
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), {
                     commentsCount: increment(1)
                 });
@@ -859,13 +879,11 @@
                 <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
                     <div className="bg-gray-900 w-full rounded-t-2xl p-4 flex flex-col h-2/3 border-t border-gray-700 animate-in slide-in-from-bottom">
                         
-                        {/* Header */}
                         <div className="flex justify-between items-center border-b border-gray-800 pb-3 mb-3">
                             <span className="text-white font-bold text-lg">Comentarios ({comments.length})</span>
                             <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-800 transition"><X size={20} className="text-gray-400"/></button>
                         </div>
 
-                        {/* Lista de Comentarios */}
                         <div className="flex-1 overflow-y-auto space-y-4 pr-2 no-scrollbar">
                             {comments.map((comment) => {
                                 const isAuthor = comment.authorId === user?.uid;
@@ -889,7 +907,6 @@
                                             <p className="text-sm text-white whitespace-pre-wrap">{comment.text}</p>
                                         </div>
                                         
-                                        {/* Botón de Borrar (solo para autor del comentario o autor del video) */}
                                         {(isAuthor || video.authorId === user?.uid) && (
                                             <button 
                                                 onClick={() => handleDeleteComment(comment.id)} 
@@ -904,7 +921,6 @@
                             <div ref={commentsEndRef} />
                         </div>
 
-                        {/* Input para Comentarios */}
                         <div className="mt-4 flex gap-2 items-end border-t border-gray-800 pt-4">
                             <textarea
                                 value={newComment}
@@ -956,7 +972,7 @@
             );
         };
         
-        // --- COMPONENTE MODAL DE INVITACIÓN A JUEGOS (NUEVO) ---
+        // --- COMPONENTE MODAL DE INVITACIÓN A JUEGOS ---
         const GameInviteModal = ({ isOpen, onClose, onSendInvite }) => {
             const [selectedGame, setSelectedGame] = useState(GAMES_CONFIG[0]);
             const [inviteLink, setInviteLink] = useState('');
@@ -1026,7 +1042,7 @@
             );
         };
         
-        // --- COMPONENTE MODAL PARA COMPARTIR VIDEO (MOVIdo para ser declarado antes de App) ---
+        // --- COMPONENTE MODAL PARA COMPARTIR VIDEO ---
         const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => { 
             const [selectedChat, setSelectedChat] = useState(null);
 
@@ -1042,7 +1058,6 @@
                 
                 await addDoc(collection(db, 'artifacts', appId, 'chats', selectedChat, 'messages'), message);
 
-                // Lógica de racha
                 const chatRef = doc(db, 'artifacts', appId, 'chats', selectedChat);
                 const chatSnap = await getDoc(chatRef);
                 const chatData = chatSnap.data();
@@ -1103,7 +1118,6 @@
                                         onClick={() => setSelectedChat(chat.id)}
                                         className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${isSelected ? 'bg-cyan-600 border-cyan-400' : 'bg-gray-800/40 border-gray-700 hover:bg-gray-800'}`}
                                     >
-                                        {/* Foto de Perfil */}
                                         <div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0">
                                             <img src={otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`} className="w-full h-full object-cover"/>
                                         </div>
@@ -1149,7 +1163,7 @@
                         displayName: username, username, photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${uc.user.uid}`,
                         bannerURL: 'https://placehold.co/600x150/1f2937/d1d5db?text=Toca+para+cambiar+el+Banner', // Banner por defecto
                         bio: "Hola, soy nuevo aquí.", createdAt: new Date().toISOString(), stats: { followers: 0, following: 0, likes: 0 },
-                        isVerified: false // Nuevo campo: Por defecto no verificado
+                        isVerified: false 
                     });
                     await updateProfile(uc.user, { displayName: username });
                 } else {
@@ -1185,11 +1199,8 @@
             const [progress, setProgress] = useState(0);
             const [buffering, setBuffering] = useState(false);
             const [hasLiked, setHasLiked] = useState(false);
-            
-            // Estado de perfil del autor (para ver si está verificado)
             const [authorProfile, setAuthorProfile] = useState({});
 
-            // Listener para verificar si ya dimos like
             useEffect(() => {
                 if(!auth.currentUser || !video.id) return;
                 const likeRef = doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'likes', auth.currentUser.uid);
@@ -1199,7 +1210,6 @@
                 return () => unsubscribe();
             }, [video.id, auth.currentUser]);
             
-            // Obtener perfil del autor para verificado
             useEffect(() => {
                 if (!video.authorId) return;
                 const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', video.authorId), s => {
@@ -1259,9 +1269,7 @@
                 }
             };
             
-            // Función para renderizar el texto con menciones interactivas
             const renderDescriptionWithMentions = (text) => {
-                // Regex para encontrar @nombredeusuario
                 const mentionRegex = /@(\w+)/g;
                 let parts = [];
                 let lastIndex = 0;
@@ -1276,14 +1284,12 @@
                         parts.push(<React.Fragment key={`text-${lastIndex}`}>{before}</React.Fragment>);
                     }
 
-                    // Enlaces la mención al perfil
                     parts.push(
                         <span 
                             key={`mention-${match.index}`} 
                             className="text-cyan-400 font-semibold cursor-pointer pointer-events-auto hover:underline"
                             onClick={(e) => {
                                 e.stopPropagation();
-                                // Aquí usamos el username como targetId para navegar al perfil
                                 onVisitProfile(username); 
                             }}
                         >
@@ -1346,7 +1352,6 @@
                     <span className="text-white text-xs font-medium drop-shadow-md">{video.likes}</span>
                     </button>
                     
-                    {/* Botón de Comentarios (Nuevo) */}
                     <button onClick={() => onOpenComments(video)} className="flex flex-col items-center gap-1 group">
                         <div className={`${actionBtnClass} comments-btn-bg`}>
                             <MessageSquare className="w-7 h-7 text-white opacity-90 drop-shadow-lg"/>
@@ -1371,7 +1376,7 @@
                 <div className="absolute bottom-24 left-4 right-20 z-20 text-white pointer-events-none">
                     <div className="flex items-center gap-1">
                         <h3 className="font-bold text-lg drop-shadow-lg mb-2 text-gray-100 cursor-pointer pointer-events-auto w-fit" onClick={() => onVisitProfile(video.authorId)}>@{video.authorName}</h3>
-                        {authorProfile.isVerified && <VerifiedBadge size={18} />} {/* FIX: Usa profile?.isVerified */}
+                        {authorProfile.isVerified && <VerifiedBadge size={18} />}
                     </div>
                     {renderDescriptionWithMentions(video.description)}
                     <div className="flex items-center gap-2 text-xs font-medium bg-white/5 border border-white/10 w-fit px-4 py-2 rounded-full backdrop-blur-md shadow-sm">
@@ -1387,15 +1392,13 @@
             const [profile, setProfile] = useState(null);
             const [isFollowing, setIsFollowing] = useState(false);
             
-            // Usamos una variable de estado para controlar la edición en el modal.
             const [isEditing, setIsEditing] = useState(false);
             
-            const isMyProfile = targetUserId === currentUser?.uid; // Se usa optional chaining
+            const isMyProfile = targetUserId === currentUser?.uid; 
             const userVideos = videos.filter(v => v.authorId === targetUserId);
 
             useEffect(() => {
                 if (!targetUserId) return;
-                // Escuchamos el perfil en tiempo real
                 const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId), (s) => {
                 if (s.exists()) setProfile(s.data());
                 });
@@ -1409,9 +1412,9 @@
             }, [targetUserId, currentUser]);
 
             const handleFollow = async () => {
-                if (!currentUser?.uid) return; // FIX: Asegurar que el UID existe antes de continuar
+                if (!currentUser?.uid) return; 
                 
-                const currentUid = currentUser.uid; // Usar el UID para operaciones
+                const currentUid = currentUser.uid; 
                 const myRef = doc(db, 'artifacts', appId, 'users', currentUid, 'following', targetUserId);
                 const targetPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', targetUserId);
                 const myPublicRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUid);
@@ -1425,7 +1428,6 @@
                     await updateDoc(targetPublicRef, { "stats.followers": increment(1) });
                     await updateDoc(myPublicRef, { "stats.following": increment(1) });
                     
-                    // FIX: Usar currentUid para obtener los datos del remitente
                     const uData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUid))).data(); 
                     await addDoc(collection(db, 'artifacts', appId, 'users', targetUserId, 'notifications'), {
                         type: 'follow', fromUser: currentUid, fromName: uData.displayName, avatar: uData.photoURL, createdAt: new Date().toISOString()
@@ -1455,7 +1457,7 @@
                     </div>
                     <div className="flex items-center gap-1">
                         <h2 className="text-lg font-bold text-white">@{profile?.username || "Usuario"}</h2>
-                        {profile?.isVerified && <VerifiedBadge size={18} />} {/* FIX: Usa profile?.isVerified */}
+                        {profile?.isVerified && <VerifiedBadge size={18} />} 
                     </div>
                     <p className="text-sm text-gray-400 text-center mt-1">{profile?.bio || "Sin biografía"}</p>
                     
@@ -1526,12 +1528,11 @@
                 setLoading(true);
                 try {
                     const path = `${type}s/${user.uid}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
-                    const url = await uploadToGitHub(file, path, (s) => console.log(s)); // Cambiado a console.log
+                    const url = await uploadToGitHub(file, path, (s) => console.log(s)); 
                     
                     const updateData = type === 'photo' ? { photoURL: url } : { bannerURL: url };
                     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), updateData);
                 } catch(e) {
-                    // Reemplazado alert con console.error para evitar problemas en iFrame
                     console.error("Error al subir imagen:", e.message);
                 }
                 setLoading(false);
@@ -1540,7 +1541,6 @@
             const handleSaveText = async () => {
                 if (!user?.uid) return;
                 setLoading(true);
-                // No permitimos que el usuario edite 'isVerified' desde el frontend por seguridad.
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), { displayName, bio });
                 setLoading(false); onClose();
             };
@@ -1595,7 +1595,7 @@
                 setLoading(true);
                 try {
                     const path = `videos/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`;
-                    const url = await uploadToGitHub(file, path, (s) => console.log(s)); // Cambiado a console.log
+                    const url = await uploadToGitHub(file, path, (s) => console.log(s)); 
                     const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
                     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), {
                         url, authorId: user.uid, authorName: userData.displayName, authorAvatar: userData.photoURL,
@@ -1640,7 +1640,6 @@
             const [tab, setTab] = useState('videos');
             const [users, setUsers] = useState([]);
             
-            // Búsqueda de usuarios
             useEffect(() => {
                 if (tab === 'users' && search.length >= 2) {
                     const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'users'), 
@@ -1723,32 +1722,24 @@
         const getUnreadMessagesCount = (chats, currentUserId) => {
             return chats.reduce((acc, chat) => {
                 const otherUid = chat.participants.find(uid => uid !== currentUserId);
-                // Usamos el campo 'lastRead' del usuario actual
                 const lastReadTime = chat.participantsData?.[currentUserId]?.lastRead || 0;
-                
-                // Usamos el campo lastMessageTime del chat (que se actualiza al enviar)
                 if (chat.lastMessageTime && chat.lastSenderId !== currentUserId && new Date(chat.lastMessageTime).getTime() > new Date(lastReadTime).getTime()) {
                     acc++;
                 }
                 return acc;
             }, 0);
         };
-        // --- FUNCIÓN PARA OBTENER MENSAJES NO LEÍDOS POR CHAT (Detalle) ---
+
         const getUnreadCountForChat = (chat, currentUserId) => {
              const lastReadTime = chat.participantsData?.[currentUserId]?.lastRead || 0;
              const lastMessageTime = chat.lastMessageTime ? new Date(chat.lastMessageTime).getTime() : 0;
-             
-             // Es no leído si el último mensaje lo envió otro usuario Y la hora del último mensaje es posterior a mi última lectura.
              const isFromOtherUser = chat.lastSenderId !== currentUserId;
              const isUnread = lastMessageTime > new Date(lastReadTime).getTime();
-
-             // Devolvemos 1 (no leído) o 0 (leído)
              return isUnread && isFromOtherUser ? 1 : 0; 
         }
 
         const InboxView = ({ user, onOpenChat, notifications, chats, onlineStatus }) => {
             const [tab, setTab] = useState('chats'); 
-            // Crear un mapa de datos de todos los usuarios de chats para facilitar la búsqueda
             const allUsers = chats.reduce((acc, chat) => {
                 const otherUid = chat.participants.find(uid => uid !== user.uid);
                 if (otherUid && chat.participantsData?.[otherUid]) {
@@ -1758,7 +1749,6 @@
             }, {});
 
             const myChats = chats.filter(c => c.status === 'accepted');
-            // La solicitud es para mí si mi ID NO es el que creó la solicitud (que está en participants) y el status es pending.
             const requests = chats.filter(c => c.status === 'pending' && c.participants.includes(user?.uid));
 
             const handleAccept = async (chatId, targetUid) => {
@@ -1766,13 +1756,13 @@
                 await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted', targetId: null });
                 
                 const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
-                const otherUser = allUsers[targetUid]; // Obtener los datos del otro usuario
+                const otherUser = allUsers[targetUid]; 
                 
                 await addDoc(collection(db, 'artifacts', appId, 'users', targetUid, 'notifications'), {
                     type: 'message_accept', fromUser: user.uid, fromName: userData.displayName, avatar: userData.photoURL, createdAt: new Date().toISOString()
                 });
                 
-                onOpenChat(chatId, otherUser); // Abrir el chat inmediatamente
+                onOpenChat(chatId, otherUser); 
             };
 
             return (
@@ -1791,14 +1781,10 @@
                             const otherName = otherUser?.displayName || "Usuario";
                             const otherImg = otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`; 
                             
-                            // Verificar racha
                             const isStreakActive = chat.streak && chat.streak.count > 0 && 
                                 (new Date().getTime() - new Date(chat.streak.lastMessageTime).getTime() < 86400000);
 
-                            // Verificar estado online
                             const isOnline = onlineStatus[otherUid]?.online || false;
-                            
-                            // Contador de mensajes no leídos
                             const unreadCount = getUnreadCountForChat(chat, user.uid);
 
                             return (
@@ -1806,11 +1792,9 @@
                                     <div className="w-12 h-12 rounded-full bg-gray-700 overflow-hidden border border-gray-600 flex-shrink-0 relative">
                                         <img src={otherImg} className="w-full h-full object-cover"/>
                                         
-                                        {/* Indicador Online (Real) */}
                                         {isOnline && (
                                             <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-gray-900"></div>
                                         )}
-                                        {/* Contador de mensajes no leídos */}
                                         {unreadCount > 0 && (
                                             <div className="absolute top-0 right-0 w-5 h-5 bg-red-600 rounded-full flex items-center justify-center text-xs font-bold text-white border-2 border-gray-900">
                                                 {unreadCount}
@@ -1820,7 +1804,6 @@
                                     <div className="flex-1">
                                         <p className="font-bold text-white flex items-center gap-2">
                                             {otherName} 
-                                            {/* Racha con GIF al lado del nombre */}
                                             {isStreakActive && (
                                                 <div className="flex items-center gap-0.5">
                                                     <img src={STREAK_GIF_URL} alt="Racha" className="w-5 h-5"/>
@@ -1861,8 +1844,8 @@
             const [file, setFile] = useState(null);
             const [replyTo, setReplyTo] = useState(null);
             const [isTyping, setIsTyping] = useState(false);
-            const [showStickerModal, setShowStickerModal] = useState(false); // NUEVO
-            const [showGameInviteModal, setShowGameInviteModal] = useState(false); // NUEVO
+            const [showStickerModal, setShowStickerModal] = useState(false); 
+            const [showGameInviteModal, setShowGameInviteModal] = useState(false); 
             const endRef = useRef(null);
             
             const [isRecording, setIsRecording] = useState(false);
@@ -1870,43 +1853,35 @@
             const audioChunksRef = useRef([]);
             const typingTimerRef = useRef(null);
             
-            // Marca de tiempo de la última lectura (para contador de no leídos)
             const markAsRead = useCallback(async () => {
                 if (!user?.uid || !chatId) return;
                 const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
-                // Solo actualizamos si la marca de tiempo local es más nueva que la registrada
                 await updateDoc(chatRef, { 
                     [`participantsData.${user.uid}.lastRead`]: new Date().toISOString()
                 });
             }, [user?.uid, chatId]);
 
 
-            // Listener de mensajes
             useEffect(() => {
                 if(!chatId) return;
-                // Orden descendente para que el CSS column-reverse funcione
                 const q = query(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), orderBy('createdAt', 'desc')); 
                 const unsub = onSnapshot(q, s => {
-                    setMessages(s.docs.map(d => ({id: d.id, ...d.data(), chatId})) // Añadir chatId al mensaje para la actualización de audio
+                    setMessages(s.docs.map(d => ({id: d.id, ...d.data(), chatId})) 
                 );
-                // Marcar como leído al recibir mensajes
                 markAsRead();
                 });
                 
-                // Marcar como leído al entrar en el chat
                 markAsRead();
                 
                 return () => unsub();
             }, [chatId, markAsRead]);
             
-            // Scroll al final al cargar mensajes (siempre después de que se cargan)
             useEffect(() => {
                 if (endRef.current) {
-                    endRef.current.scrollIntoView({ behavior: 'smooth' }); // Scroll más suave
+                    endRef.current.scrollIntoView({ behavior: 'smooth' }); 
                 }
             }, [messages.length, chatId]); 
             
-            // Listener del Typing Indicator (Obtiene el estado de "escribiendo" del chat doc)
             useEffect(() => {
                 if(!chatId) return;
                 const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
@@ -1920,17 +1895,14 @@
                 });
             }, [chatId]);
             
-            // Función para actualizar el estado de "escribiendo" en Firebase
             const setTypingStatus = (status) => {
                 const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
                 updateDoc(chatRef, { typing: status ? user?.uid : null }).catch(console.error);
             };
 
-            // Manejar la escritura del usuario
             const handleTextChange = (e) => {
                 setTxt(e.target.value);
                 
-                // Redimensionar el textarea
                 e.target.style.height = 'auto';
                 e.target.style.height = e.target.scrollHeight + 'px';
 
@@ -1950,7 +1922,6 @@
                 }
             };
             
-            // Cleanup para el typing indicator al salir
             useEffect(() => {
                 return () => {
                     clearTimeout(typingTimerRef.current);
@@ -1971,7 +1942,7 @@
                 const lastSender = chatData.streak ? chatData.streak.lastSenderId : null;
                 const currentCount = chatData.streak ? chatData.streak.count : 0;
                 
-                const isWithin24Hours = (now - lastTime) < 86400000; // 24 horas en ms
+                const isWithin24Hours = (now - lastTime) < 86400000; 
                 const streakLost = (now - lastTime) >= 86400000;
 
                 let newCount = currentCount;
@@ -1992,7 +1963,7 @@
                         lastMessageTime: new Date(lastMessageTime).toISOString(),
                         lastSenderId: user.uid
                     },
-                    lastMessageTime: new Date(lastMessageTime).toISOString(), // Actualizar el timestamp del chat
+                    lastMessageTime: new Date(lastMessageTime).toISOString(), 
                     lastSenderId: user.uid
                 });
             };
@@ -2004,7 +1975,7 @@
 
 
             const sendMessage = async (type, content, fileDetails = null) => {
-                if (!user?.uid) return; // FIX: Asegurar que el UID existe antes de enviar
+                if (!user?.uid) return; 
                 
                 const messageTime = new Date().toISOString();
 
@@ -2014,10 +1985,10 @@
                     createdAt: messageTime,
                     ...(type === 'text' || type === 'audio_tts' ? { text: content } : { fileUrl: content, fileType: fileDetails?.fileType || 'file' }),
                     ...(type === 'video' ? { videoId: content } : {}),
-                    ...(type === 'sticker' ? { fileUrl: content } : {}), // Para stickers
-                    ...(type === 'game_invite' ? { data: content } : {}), // Para invitación a juego
+                    ...(type === 'sticker' ? { fileUrl: content } : {}), 
+                    ...(type === 'game_invite' ? { data: content } : {}), 
                     ...(replyTo ? { replyTo: { text: replyTo.text, type: replyTo.type, senderId: replyTo.senderId } } : {}),
-                    ...(type === 'audio_tts' ? { fileUrl: fileDetails?.fileUrl } : {}) // Para el TTS, si la URL ya se generó
+                    ...(type === 'audio_tts' ? { fileUrl: fileDetails?.fileUrl } : {}) 
                 };
 
                 await addDoc(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), message);
@@ -2035,18 +2006,16 @@
                         fromUser: user.uid, 
                         fromName: userData.displayName, 
                         avatar: userData.photoURL, 
-                        createdAt: messageTime // Usar el mismo timestamp
+                        createdAt: messageTime 
                     });
                 }
             };
             
-            // NUEVO: Manejar la selección de stickers
             const handleStickerSelect = (url) => {
                 sendMessage('sticker', url);
                 setShowStickerModal(false);
             };
             
-            // NUEVO: Manejar el envío de invitación a juego
             const handleSendGameInvite = (gameName, inviteLink, message) => {
                 const data = { gameName, inviteLink, message };
                 sendMessage('game_invite', data);
@@ -2056,7 +2025,6 @@
             const sendTextOrAudio = () => {
                 if(!txt.trim()) return;
 
-                // Enviamos como texto, el componente de burbuja decidirá si es TTS (largo) o texto simple (corto).
                 sendMessage('text', txt.trim());
                 
                 setTxt("");
@@ -2067,14 +2035,12 @@
                 const selectedFile = e.target.files[0];
                 if (selectedFile) {
                     setFile(selectedFile);
-                    // No mostramos el nombre del archivo en el input para evitar el "Subiendo..."
                 }
             };
 
             const sendFile = async (selectedFile = file) => {
-                if (!user?.uid || !selectedFile) return; // FIX: Asegurar que el UID existe
+                if (!user?.uid || !selectedFile) return; 
                 
-                // FIX: Comprobación de seguridad para selectedFile.name
                 const fileName = selectedFile.name || "file.bin";
                 const fileExtension = fileName.split('.').pop().toLowerCase();
                 
@@ -2082,7 +2048,6 @@
                 if (['png', 'jpg', 'jpeg', 'gif'].includes(fileExtension)) fileType = 'image';
                 else if (['mp3', 'wav', 'ogg', 'webm'].includes(fileExtension)) fileType = 'audio';
                 
-                // Eliminado setTxt para evitar el mensaje de subida
                 const path = `chats/${chatId}/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9.]/g,'')}`;
                 
                 try {
@@ -2097,7 +2062,6 @@
                 }
             };
             
-            // --- LÓGICA DE GRABACIÓN DE AUDIO REAL ---
             const startRecording = async () => {
                 if (isRecording || !user?.uid) return;
                 
@@ -2116,7 +2080,7 @@
                         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
                         const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: 'audio/webm' });
                         await sendFile(audioFile); 
-                        stream.getTracks().forEach(track => track.stop()); // Detener el micrófono
+                        stream.getTracks().forEach(track => track.stop()); 
                     };
 
                     recorder.start();
@@ -2137,13 +2101,12 @@
 
 
             const deleteMsg = async (msgId) => {
-                // Función de eliminación discreta
                 await deleteDoc(doc(db, 'artifacts', appId, 'chats', chatId, 'messages', msgId));
             };
             
             const handleKeyDown = (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault(); // Previene el salto de línea por defecto
+                    e.preventDefault(); 
                     if (file) {
                         sendFile();
                     } else if (txt.trim()) {
@@ -2152,12 +2115,10 @@
                 }
             };
 
-            // FIX: Lógica de visibilidad del botón de envío
             const isSendButtonVisible = !!file || txt.trim().length > 0;
 
             return (
                 <div className="absolute inset-0 z-50 bg-gray-900 flex flex-col animate-in slide-in-from-right h-[100dvh]">
-                    {/* ENCABEZADO DEL CHAT (MODIFICADO) */}
                     <div className="p-4 bg-gray-900 border-b border-gray-800 flex items-center gap-3">
                         <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-800 transition"><ArrowLeft className="text-white"/></button>
                         
@@ -2173,7 +2134,6 @@
                     <div className="message-list-container">
                         <div ref={endRef} />
                         <div className="message-list-content">
-                            {/* Los mensajes se mapean inversamente por el CSS column-reverse */}
                             {messages.slice().reverse().map((m) => ( 
                                 <MessageBubble 
                                     key={m.id} 
@@ -2188,7 +2148,6 @@
                         </div>
                     </div>
                     
-                    {/* Indicador de escribiendo */}
                     {isTyping && (
                         <div className="px-4 py-2">
                             <div className="flex justify-start">
@@ -2204,7 +2163,6 @@
                         </div>
                     )}
                     
-                    {/* Input y barra de respuesta */}
                     <div className="p-3 bg-gray-900 border-t border-gray-800 flex flex-col gap-2">
                         {replyTo && (
                             <div className="flex items-center justify-between p-2 bg-gray-800 rounded-lg text-sm border-l-4 border-cyan-400">
@@ -2213,9 +2171,8 @@
                             </div>
                         )}
 
-                        <div className="flex gap-2 items-end"> {/* items-end para alinear con el textarea */}
+                        <div className="flex gap-2 items-end"> 
                             
-                            {/* Botón para Stickers */}
                             <button 
                                 onClick={() => setShowStickerModal(true)}
                                 className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0"
@@ -2223,7 +2180,6 @@
                                 <Smile size={20}/>
                             </button>
                             
-                            {/* Botón de Invitación a Juego */}
                             <button 
                                 onClick={() => setShowGameInviteModal(true)}
                                 className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0"
@@ -2231,29 +2187,25 @@
                                 <Gamepad size={20} className="text-cyan-400"/>
                             </button>
                             
-                            {/* Botón para Adjuntar */}
                             <label className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0">
                                 <FileText size={18}/>
                                 <input type="file" className="hidden" onChange={handleFileSelect} />
                             </label>
 
-                            {/* Campo de Texto (Textarea para texto largo) */}
                             <textarea
-                                value={file ? file.name : txt} // Muestra el nombre del archivo o el texto
+                                value={file ? file.name : txt} 
                                 onChange={handleTextChange} 
                                 className="chat-input flex-1 bg-gray-800 text-white p-3 rounded-2xl outline-none resize-none max-h-40" 
-                                placeholder={"Mensaje..."} // Texto estático para interfaz limpia
+                                placeholder={"Mensaje..."} 
                                 onKeyDown={handleKeyDown}
                                 disabled={isRecording}
-                                rows={1} // Fila inicial mínima
+                                rows={1} 
                             />
                             
-                            {/* Botón de Enviar (Texto/Archivo) o Audio (TTS/Mic) */}
                             <div className="flex flex-col gap-2 items-center flex-shrink-0">
                                 
                                 {isSendButtonVisible ? (
                                     <>
-                                        {/* Botón de TTS (Solo si hay texto y es largo) */}
                                         {txt.trim() && txt.trim().length > 100 && !file && (
                                             <button 
                                                 onClick={sendTextOrAudio} 
@@ -2264,14 +2216,12 @@
                                             </button>
                                         )}
                                         
-                                        {/* Botón principal de Enviar (Archivo o Texto) */}
                                         <button onClick={file ? sendFile : sendTextOrAudio} 
                                             className="w-10 h-10 p-2 bg-white rounded-full text-black flex items-center justify-center hover:bg-gray-200 transition shadow-lg">
                                             <Send size={18}/>
                                         </button>
                                     </>
                                 ) : (
-                                    // Botón de Audio (Micrófono) si no hay nada escrito ni archivo
                                     <button 
                                         onMouseDown={startRecording}
                                         onMouseUp={stopRecording}
@@ -2302,7 +2252,7 @@
 
         const App = () => {
             const [user, setUser] = useState(null);
-            const [isAuthReady, setIsAuthReady] = useState(false); // NUEVO: Estado de autenticación lista
+            const [isAuthReady, setIsAuthReady] = useState(false); 
             const [videos, setVideos] = useState([]);
             const [chats, setChats] = useState([]); 
             const [activeTab, setActiveTab] = useState('home');
@@ -2311,9 +2261,9 @@
             const [showShare, setShowShare] = useState(null); 
             const [viewingProfile, setViewingProfile] = useState(null);
             const [activeChatId, setActiveChatId] = useState(null);
-            const [chatOtherUser, setChatOtherUser] = useState(null); // Nuevo estado para el otro usuario en el chat
-            const [onlineStatus, setOnlineStatus] = useState({}); // NUEVO: Estado de presencia
-            const [commentsVideo, setCommentsVideo] = useState(null); // NUEVO: Estado para el modal de comentarios
+            const [chatOtherUser, setChatOtherUser] = useState(null); 
+            const [onlineStatus, setOnlineStatus] = useState({}); 
+            const [commentsVideo, setCommentsVideo] = useState(null); 
             const [feedMode, setFeedMode] = useState('global');
             const [profileFeedVideos, setProfileFeedVideos] = useState([]);
             const [notifications, setNotifications] = useState([]);
@@ -2321,16 +2271,13 @@
             
             const feedRef = useRef(null);
             
-            // Función para configurar la presencia
             const setupPresence = (uid) => {
                 const isOnlineRef = doc(db, 'artifacts', appId, 'public', 'data', 'status', uid);
                 
-                // 1. Establecer que estás online ahora
                 const setOnline = async () => {
                     await setDoc(isOnlineRef, { online: true, last_seen: serverTimestamp() });
                 };
                 
-                // 2. Intentar establecer el estado offline cuando la app se cierra (no garantizado)
                 const setOffline = async () => {
                     await setDoc(isOnlineRef, { online: false, last_seen: serverTimestamp() }, { merge: true });
                 };
@@ -2341,37 +2288,30 @@
                 
                 return () => {
                     window.removeEventListener('beforeunload', setOffline);
-                    // No podemos usar onDisconnect en web estática de Firestore, confiamos en beforeunload/inactividad.
                 };
             };
 
-            // 1. Inicialización de Firebase y Manejo de Autenticación (CRÍTICO)
             useEffect(() => {
                 const unsubAuth = onAuthStateChanged(auth, (currentUser) => {
                     setUser(currentUser);
                     setIsAuthReady(true);
                     if (currentUser && !currentUser.isAnonymous) {
-                        setupPresence(currentUser.uid); // Configurar presencia al iniciar sesión
+                        setupPresence(currentUser.uid); 
                     }
                 });
 
                 return () => unsubAuth();
-            }, []); // Se ejecuta solo una vez al montar
+            }, []); 
 
-            // 2. Listeners de Datos (Solo se ejecutan si Auth está listo Y hay usuario)
             useEffect(() => {
-                // Si no hay un usuario registrado (autenticado por el formulario) o el Auth no está listo, salimos.
                 if(!user || !isAuthReady) return; 
                 
                 const unsubscribers = [];
                 
-                // Videos
                 unsubscribers.push(onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), orderBy('createdAt', 'desc')), s => setVideos(s.docs.map(d => ({id: d.id, ...d.data()})))));
                 
-                // Chats
                 unsubscribers.push(onSnapshot(query(collection(db, 'artifacts', appId, 'chats'), where('participants', 'array-contains', user.uid)), s => setChats(s.docs.map(d => ({id: d.id, ...d.data()})))));
                 
-                // Notificaciones
                 const qNotifs = query(collection(db, 'artifacts', appId, 'users', user.uid, 'notifications'), orderBy('createdAt', 'desc'), limit(10));
                 unsubscribers.push(onSnapshot(qNotifs, (snapshot) => {
                     const notifs = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
@@ -2386,7 +2326,6 @@
                     setNotifications(notifs);
                 }));
 
-                // Listener de Presencia Global
                 unsubscribers.push(onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'status'), (snapshot) => {
                     const statusMap = {};
                     snapshot.docs.forEach(doc => {
@@ -2396,7 +2335,7 @@
                 }));
                 
                 return () => unsubscribers.forEach(unsub => unsub());
-            }, [user, isAuthReady]); // Dependencia clave: isAuthReady y user.
+            }, [user, isAuthReady]); 
 
             const handleScroll = () => {
                 if (feedRef.current && activeTab === 'home') {
@@ -2406,7 +2345,7 @@
             };
 
             const toggleLike = async (video, likerId) => {
-                if (!likerId) return; // Parar si el usuario no está listo
+                if (!likerId) return; 
 
                 const likeRef = doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'likes', likerId);
                 const likeSnap = await getDoc(likeRef);
@@ -2417,8 +2356,7 @@
                     await setDoc(likeRef, { userId: likerId, createdAt: new Date().toISOString() });
                     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'videos', video.id), { likes: increment(1) });
                     
-                    if(video.authorId !== likerId) { // Asegúrate de no notificarte a ti mismo
-                        // FIX: Usar likerId (currentUser.uid) para obtener los datos del remitente
+                    if(video.authorId !== likerId) { 
                         const uData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', likerId))).data();
                         await addDoc(collection(db, 'artifacts', appId, 'users', video.authorId, 'notifications'), {
                             type: 'like', fromUser: likerId, fromName: uData.displayName, avatar: uData.photoURL, thumbnail: video.url, createdAt: new Date().toISOString()
@@ -2468,7 +2406,7 @@
             };
 
             const startChat = async (targetUid, targetProfile) => {
-                if (!user?.uid) return; // FIX: Asegurar que el UID existe
+                if (!user?.uid) return; 
                 
                 const chatId = getChatId(user.uid, targetUid);
                 const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
@@ -2476,10 +2414,8 @@
 
                 if (chatSnap.exists()) {
                     if (chatSnap.data().status === 'accepted') {
-                        // Abrir chat existente
                         openChat(chatId, { uid: targetUid, ...targetProfile });
                     } else {
-                        // Reemplazado alert con console.log para evitar problemas en iFrame
                         console.log("Solicitud pendiente...");
                     }
                 } else {
@@ -2492,14 +2428,12 @@
                         status: 'pending',
                         createdAt: new Date().toISOString()
                     });
-                    // Reemplazado alert con console.log para evitar problemas en iFrame
                     console.log("Solicitud enviada");
                 }
             };
 
             const currentFeedVideos = feedMode === 'global' ? videos : profileFeedVideos;
 
-            // Muestra pantalla de carga si AUTH no está listo
             if (!isAuthReady) {
                 return (
                     <div className="flex flex-col items-center justify-center h-screen bg-gray-950 text-white">
@@ -2509,7 +2443,6 @@
                 );
             }
 
-            // Si no hay usuario autenticado (ni anónimo ni registrado), mostramos la pantalla de AuthScreen.
             if(!user) return <AuthScreen />;
 
             return (
@@ -2538,7 +2471,7 @@
                                 toggleLike={toggleLike} 
                                 onShare={(id) => setShowShare(id)} 
                                 onVisitProfile={goToProfile}
-                                onOpenComments={openComments} // Nuevo prop
+                                onOpenComments={openComments} 
                             />
                         )) : <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-white/50"/></div>}
                     </div>
@@ -2582,7 +2515,6 @@
                         <button onClick={()=>setActiveTab('inbox')} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100 relative">
                             <img src={ICONS.bandeja} className="w-7 h-7 invert"/>
                             <span className="text-[10px] font-medium text-white">Bandeja</span>
-                            {/* Contador total de chats no leídos */}
                             {getUnreadMessagesCount(chats, user.uid) > 0 && (
                                 <span className="absolute top-0 right-3 w-4 h-4 bg-red-600 rounded-full flex items-center justify-center text-[10px] font-bold text-white border-2 border-black">
                                     {getUnreadMessagesCount(chats, user.uid)}
