@@ -277,7 +277,8 @@
             view.setUint16(offset, numChannels, true); offset += 2; // NumChannels
             view.setUint32(offset, sampleRate, true); offset += 4; // SampleRate
             view.setUint32(offset, byteRate, true); offset += 4; // ByteRate
-            view.setUint16(offset, blockAlign, true); offset += 2; // BitsPerSample
+            view.setUint16(offset, blockAlign, true); offset += 2; // BlockAlign
+            view.setUint16(offset, 16, true); offset += 2; // BitsPerSample
 
             // Data Chunk
             view.setUint32(offset, 0x64617461, false); offset += 4; // "data"
@@ -1029,9 +1030,9 @@
                     setError(''); // Limpiar errores
                     
                 } catch (e) {
+                    // Si falla la transacción (por ej. por permisos), revertimos la deducción
                     console.error("Error al enviar regalo:", e);
-                    setError('Error al procesar la transacción del regalo.');
-                    // Nota: En un sistema real, si la deducción falla, la acreditación no debe ocurrir.
+                    setError('Error al procesar la transacción del regalo: ' + e.message);
                 }
             };
             // ------------------------------------------------
@@ -1152,15 +1153,67 @@
         };
 
         const StickerModal = ({ isOpen, onClose, onSelectSticker }) => {
-            // ... (Sin cambios)
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
+                    <div className="bg-gray-900 w-full rounded-t-2xl p-6 border-t border-gray-700 animate-in slide-in-from-bottom">
+                        <h3 className="text-white font-bold text-lg mb-4 flex justify-between items-center">Enviar Sticker<button onClick={onClose}><X size={20} className="text-gray-400"/></button></h3>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-4 max-h-64 overflow-y-auto">
+                            {STICKERS.map((url, index) => (<div key={index} className="aspect-square bg-gray-800 rounded-xl flex items-center justify-center cursor-pointer hover:bg-gray-700 transition" onClick={() => onSelectSticker(url)}><img src={url} alt={`Sticker ${index + 1}`} className="max-w-[80%] max-h-[80%] object-contain" /></div>))}
+                        </div>
+                    </div>
+                </div>
+            );
         };
         
         const GameInviteModal = ({ isOpen, onClose, onSendInvite }) => {
-            // ... (Sin cambios)
+            if (!isOpen) return null;
+             const [selectedGame, setSelectedGame] = useState(GAMES_CONFIG[0]);
+             const [inviteLink, setInviteLink] = useState('');
+             const [message, setMessage] = useState('');
+             const handleSend = () => { if (!inviteLink.trim()) return; onSendInvite(selectedGame.name, inviteLink.trim(), message.trim()); onClose(); };
+             return (
+                <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
+                    <div className="bg-gray-900 w-full max-w-sm rounded-xl p-6 border border-gray-700 shadow-2xl">
+                        <h3 className="text-white font-bold text-xl mb-4 flex items-center justify-between">Invitar a Jugar <Gamepad size={24} className="text-cyan-400"/></h3>
+                        <div className="mb-4"><label className="block text-sm font-medium text-gray-400 mb-2">Selecciona un Juego</label><div className="flex flex-wrap gap-2">{GAMES_CONFIG.map(game => (<button key={game.name} onClick={() => setSelectedGame(game)} className={`flex items-center gap-2 p-2 rounded-full border transition-all ${selectedGame.name === game.name ? 'bg-cyan-600 border-cyan-400 text-white shadow-md' : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'}`}><img src={game.logo} alt={game.name} className="w-5 h-5 rounded-full"/><span className="text-sm">{game.name}</span></button>))}</div></div>
+                        <label className="block text-sm font-medium text-gray-400 mb-2 mt-4">Enlace de Partida ({selectedGame.name})</label><input type="text" value={inviteLink} onChange={(e) => setInviteLink(e.target.value)} placeholder={selectedGame.placeholder} className="w-full bg-gray-800 text-white p-3 rounded-lg border border-gray-700 outline-none mb-4"/>
+                        <label className="block text-sm font-medium text-gray-400 mb-2">Mensaje (Opcional)</label><textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="¡Vamos a ganar!" className="w-full bg-gray-800 text-white p-3 rounded-lg mb-4 outline-none resize-none h-20"/>
+                        <button onClick={handleSend} disabled={!inviteLink.trim()} className="w-full py-3.5 bg-white text-black font-bold rounded-xl disabled:opacity-50 hover:bg-gray-200 transition shadow-lg">Enviar Invitación</button><button onClick={onClose} className="w-full text-gray-400 text-sm mt-3">Cerrar</button>
+                    </div>
+                </div>
+            );
         };
         
         const ShareVideoModal = ({ isOpen, onClose, videoId, user, chats }) => {
-            // ... (Sin cambios)
+            if (!isOpen) return null;
+            const [selectedChat, setSelectedChat] = useState(null);
+            const handleSend = async () => {
+                if (!user?.uid || !selectedChat || !videoId) return; 
+                const message = { type: 'video', videoId: videoId, senderId: user.uid, createdAt: new Date().toISOString() };
+                await addDoc(collection(db, 'artifacts', appId, 'chats', selectedChat, 'messages'), message);
+                const chatRef = doc(db, 'artifacts', appId, 'chats', selectedChat); const chatSnap = await getDoc(chatRef); const chatData = chatSnap.data();
+                const now = new Date().getTime(); const lastTime = chatData.streak ? new Date(chatData.streak.lastMessageTime).getTime() : 0; const lastSender = chatData.streak ? chatData.streak.lastSenderId : null; const currentCount = chatData.streak ? chatData.streak.count : 0;
+                const isWithin24Hours = (now - lastTime) < 86400000; const streakLost = (now - lastTime) >= 86400000;
+                let newCount = currentCount;
+                if (currentCount === 0) { newCount = 1; } else if (isWithin24Hours && lastSender !== user.uid) { newCount = currentCount + 1; } else if (streakLost) { newCount = 1; } else if (lastSender === user.uid) { newCount = currentCount; }
+                await updateDoc(chatRef, { streak: { count: newCount, lastMessageTime: new Date().toISOString(), lastSenderId: user.uid }, lastMessageTime: new Date().toISOString(), lastSenderId: user.uid });
+                onClose();
+            };
+            return (
+                <div className="fixed inset-0 z-50 bg-black/80 flex items-end">
+                    <div className="bg-gray-900 w-full rounded-t-2xl p-6 border-t border-gray-700 animate-in slide-in-from-bottom">
+                        <h3 className="text-white font-bold text-lg mb-4 flex justify-between items-center">Compartir en Chat<button onClick={onClose}><X size={20} className="text-gray-400"/></button></h3>
+                        <div className="max-h-64 overflow-y-auto space-y-3 mb-6">
+                            {chats.filter(c => c.status === 'accepted').map(chat => {
+                                const otherUid = chat.participants.find(uid => uid !== user.uid); const otherUser = chat.participantsData?.[otherUid]; const otherName = otherUser?.displayName || "Usuario"; const isSelected = selectedChat === chat.id;
+                                return (<div key={chat.id} onClick={() => setSelectedChat(chat.id)} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition ${isSelected ? 'bg-cyan-600 border-cyan-400' : 'bg-gray-800/40 border-gray-700 hover:bg-gray-800'}`}><div className="w-10 h-10 rounded-full overflow-hidden flex-shrink-0"><img src={otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`} className="w-full h-full object-cover"/></div><span className="font-medium text-white">{otherName}</span></div>);
+                            })}
+                        </div>
+                        <button onClick={handleSend} disabled={!selectedChat} className="w-full py-3.5 bg-white text-black font-bold rounded-xl disabled:opacity-50 hover:bg-gray-200 transition">Enviar Video</button>
+                    </div>
+                </div>
+            );
         };
 
         const AuthScreen = () => {
@@ -1395,19 +1448,465 @@
         };
 
         const UploadModal = ({ isOpen, onClose, user }) => {
-            // ... (Sin cambios)
+            if (!isOpen) return null;
+             const [file, setFile] = useState(null); const [preview, setPreview] = useState(null); const [desc, setDesc] = useState(""); const [loading, setLoading] = useState(false); const [status, setStatus] = useState("");
+            const handleFile = (e) => { const f = e.target.files[0]; if(f) { setFile(f); setPreview(URL.createObjectURL(f)); }};
+            const handleUpload = async () => { if(!user?.uid || !file) return; setLoading(true); try { const path = `videos/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g,'')}`; const url = await uploadToGitHub(file, path, (s) => console.log(s)); const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data(); await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'videos'), { url, authorId: user.uid, authorName: userData.displayName, authorAvatar: userData.photoURL, description: desc, likes: 0, commentsCount: 0, createdAt: new Date().toISOString() }); onClose(); setFile(null); setPreview(null); setDesc(""); } catch(e) { setStatus("Error: " + e.message); } setLoading(false); };
+            return (<div className="fixed inset-0 z-50 bg-gray-900/95 backdrop-blur-xl flex flex-col animate-in fade-in"><div className="p-4 flex justify-between items-center border-b border-gray-700"><button onClick={onClose}><X className="text-gray-400 hover:text-white"/></button><h3 className="text-white font-bold flex items-center gap-2"><img src={ICONS.crear} className="w-6 h-6 invert"/> Nuevo Video</h3><div className="w-6"></div></div><div className="flex-1 p-6 flex flex-col items-center justify-center">{!preview ? (<label className="w-full h-64 border-2 border-dashed border-gray-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-gray-400 bg-gray-800/30"><div className="p-4 rounded-full bg-gray-700 mb-3"><img src={ICONS.crear} className="w-6 h-6 invert opacity-70"/></div><span className="text-gray-400 font-medium">Seleccionar video</span><input type="file" accept="video/*" className="hidden" onChange={handleFile}/></label>) : (<div className="relative w-full h-64 bg-black rounded-2xl overflow-hidden border border-gray-700"><video src={preview} className="w-full h-full object-contain"/><button onClick={()=>{setPreview(null);setFile(null)}} className="absolute top-2 right-2 bg-black/50 p-1.5 rounded-full text-white hover:bg-black/80"><X size={16}/></button></div>)}<textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="Añade una descripción (Ej: @usuario mira esto)..." className="w-full bg-gray-900 text-white p-4 rounded-xl mt-6 h-24 outline-none resize-none border border-gray-700 focus:border-gray-500"/>{status && <p className="text-cyan-400 text-sm mt-2 animate-pulse">{status}</p>}<button disabled={loading||!file} onClick={handleUpload} className="w-full bg-white text-black font-bold py-3.5 rounded-xl mt-auto mb-4 disabled:opacity-50 hover:bg-gray-200 transition shadow-lg">{loading?"Publicando...":"Publicar Video"}</button></div></div>);
         };
 
         const TrendsView = ({ videos, onVideoClick, onVisitProfile }) => {
-            // ... (Sin cambios)
+            const [search, setSearch] = useState(""); const [tab, setTab] = useState('videos'); const [users, setUsers] = useState([]);
+            useEffect(() => { if (tab === 'users' && search.length >= 2) { const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'users'), where('displayName', '>=', search), where('displayName', '<=', search + '\uf8ff'), limit(10)); const unsub = onSnapshot(q, (snap) => { setUsers(snap.docs.map(d => ({id: d.id, ...d.data()})).filter(u => u.id !== auth.currentUser?.uid)); }); return () => unsub(); } else if (tab === 'users') { setUsers([]); } }, [tab, search]);
+            const filteredVideos = videos.filter(v => (v.description || "").toLowerCase().includes(search.toLowerCase()) || (v.authorName || v.author || "").toLowerCase().includes(search.toLowerCase()));
+            
+            // CRÍTICO: El contenedor principal maneja el scroll.
+            return (<div className="w-full h-full bg-gray-900 pt-4 px-4 overflow-y-auto pb-24 flex flex-col"> 
+                <div className="relative mb-6">
+                    <input type="text" placeholder="Buscar..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-full bg-gray-800 text-white p-3 pl-10 rounded-xl border border-gray-700 outline-none" /><Search className="absolute left-3 top-3.5 text-gray-500" size={18} />
+                </div>
+                <div className="flex gap-4 mb-6 border-b border-gray-800 pb-2">
+                    <button onClick={() => setTab('videos')} className={`text-sm font-bold pb-2 ${tab==='videos'?'text-white border-b-2 border-white':'text-gray-500'}`}>Videos</button>
+                    <button onClick={() => setTab('users')} className={`text-sm font-bold pb-2 ${tab==='users'?'text-white border-b-2 border-white':'text-gray-500'}`}>Usuarios</button>
+                </div>
+                {tab === 'videos' && (
+                    <><h3 className="font-bold text-white mb-4 flex items-center gap-2"><Hash className="text-cyan-400" size={18} /> Resultados de Videos</h3>
+                    <div className="grid grid-cols-2 gap-2">{filteredVideos.map(video => (<div key={video.id} onClick={() => onVideoClick(video)} className="relative aspect-[9/16] bg-gray-800 rounded-xl overflow-hidden cursor-pointer group shadow-lg border border-gray-800"><video src={video.url + '#t=0.1'} className="w-full h-full object-cover opacity-80" muted preload="metadata" /><div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 to-transparent"><p className="text-xs font-bold text-white truncate">@{video.authorName}</p></div></div>))}</div></>
+                )}
+                {tab === 'users' && (
+                    <><h3 className="font-bold text-white mb-4 flex items-center gap-2"><UserIcon className="text-cyan-400" size={18} /> Usuarios Encontrados</h3>
+                    <div className="space-y-2">{users.length === 0 && search.length >= 2 ? <p className="text-gray-500 text-center">No se encontraron usuarios.</p> : users.map(u => (<div key={u.id} onClick={() => onVisitProfile(u.id)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800"><div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden flex-shrink-0"><img src={u.photoURL} className="w-full h-full object-cover"/></div><div className="flex-1"><div className="flex items-center gap-1"><p className="font-bold text-white">@{u.username}</p>{u.isVerified && <VerifiedBadge size={16} />}</div><p className="text-xs text-gray-400 truncate">{u.displayName}</p></div><button onClick={(e) => {e.stopPropagation(); onVisitProfile(u.id);}} className="text-cyan-400 p-2 rounded-full hover:bg-gray-700 transition"><UserPlus size={18}/></button></div>))}</div></>
+                )}
+            </div>);
         };
 
         const InboxView = ({ user, onOpenChat, notifications, chats, onlineStatus }) => {
-            // ... (Sin cambios)
+             const [tab, setTab] = useState('chats'); 
+             const allUsers = chats.reduce((acc, chat) => { const otherUid = chat.participants.find(uid => uid !== user.uid); if (otherUid && chat.participantsData?.[otherUid]) { acc[otherUid] = { uid: otherUid, ...chat.participantsData[otherUid] }; } return acc; }, {}); 
+             const myChats = chats.filter(c => c.status === 'accepted'); 
+             const requests = chats.filter(c => c.status === 'pending' && c.participants.includes(user?.uid)); 
+             const handleAccept = async (chatId, targetUid) => { if (!user?.uid) return; await updateDoc(doc(db, 'artifacts', appId, 'chats', chatId), { status: 'accepted', targetId: null }); const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data(); const otherUser = allUsers[targetUid]; await addDoc(collection(db, 'artifacts', appId, 'users', targetUid, 'notifications'), { type: 'message_accept', fromUser: user.uid, fromName: userData.displayName, avatar: userData.photoURL, createdAt: new Date().toISOString() }); onOpenChat(chatId, otherUser); };
+            
+            // CRÍTICO: El contenedor principal maneja el scroll.
+            return (<div className="w-full h-full bg-gray-900 pt-4 px-4 overflow-y-auto pb-24 flex flex-col">
+                <div className="flex gap-4 mb-6 border-b border-gray-800 pb-2">
+                    <button onClick={() => setTab('chats')} className={`text-sm font-bold pb-2 ${tab==='chats'?'text-white border-b-2 border-white':'text-gray-500'}`}>Mensajes</button>
+                    <button onClick={() => setTab('requests')} className={`text-sm font-bold pb-2 ${tab==='requests'?'text-white border-b-2 border-white':'text-gray-500'}`}>Solicitudes {requests.length > 0 && <span className="text-red-500">({requests.length})</span>}</button>
+                </div>
+                <div className="space-y-2 flex-1"> {/* flex-1 para que ocupe el resto del espacio y permita scroll en su contenedor padre */}
+                    {tab === 'chats' ? (myChats.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes mensajes</div> : myChats.map(chat => { const otherUid = chat.participants.find(uid => uid !== user.uid); const otherUser = allUsers[otherUid]; const otherName = otherUser?.displayName || "Usuario"; const otherImg = otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUid}`; const isStreakActive = chat.streak && chat.streak.count > 0 && (new Date().getTime() - new Date(chat.streak.lastMessageTime).getTime() < 86400000); const isOnline = onlineStatus[otherUid]?.online || false; const unreadCount = getUnreadCountForChat(chat, user.uid); return (<div key={chat.id} onClick={() => onOpenChat(chat.id, otherUser)} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 cursor-pointer hover:bg-gray-800"><div className="w-12 h-12 rounded-full bg-gray-700 overflow-hidden border border-gray-600 flex-shrink-0 relative"><img src={otherImg} className="w-full h-full object-cover"/>{isOnline && (<div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-gray-900"></div>)}{unreadCount > 0 && (<div className="absolute top-0 right-0 w-5 h-5 bg-red-600 rounded-full flex items-center justify-center text-xs font-bold text-white border-2 border-gray-900">{unreadCount}</div>)}</div><div className="flex-1"><p className="font-bold text-white flex items-center gap-2">{otherName} {isStreakActive && (<div className="flex items-center gap-0.5"><img src={STREAK_GIF_URL} alt="Racha" className="w-5 h-5"/><span className="text-yellow-400 text-xs font-extrabold">x{chat.streak.count}</span></div>)}</p><p className="text-xs text-gray-400">Toca para chatear</p></div></div>) })) : (requests.length === 0 ? <div className="text-center text-gray-500 mt-10">No tienes solicitudes</div> : requests.map(req => { const senderUid = req.participants.find(uid => uid !== user.uid); const senderUser = allUsers[senderUid]; const senderName = senderUser?.displayName || "Usuario"; return (<div key={req.id} className="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800"><div className="flex-1"><p className="font-bold text-white">Solicitud de {senderName}</p><p className="text-xs text-gray-400">Quiere chatear contigo</p></div><button onClick={() => handleAccept(req.id, senderUid)} className="px-4 py-2 bg-white text-black rounded-lg text-xs font-bold">Aceptar</button></div>) }))}
+                </div>
+            </div>);
         };
 
         const ChatScreen = ({ chatId, user, onClose, videos, chatData, otherUser }) => {
-            // ... (Sin cambios)
+            const [messages, setMessages] = useState([]);
+            const [txt, setTxt] = useState("");
+            const [file, setFile] = useState(null);
+            const [preview, setPreview] = useState(null); 
+            const [replyTo, setReplyTo] = useState(null);
+            const [isTyping, setIsTyping] = useState(false);
+            const [showStickerModal, setShowStickerModal] = useState(false); 
+            const [showGameInviteModal, setShowGameInviteModal] = useState(false); 
+            const endRef = useRef(null);
+            
+            const [isRecording, setIsRecording] = useState(false);
+            const mediaRecorderRef = useRef(null);
+            const audioChunksRef = useRef([]);
+            const typingTimerRef = useRef(null);
+            
+            const markAsRead = useCallback(async () => {
+                if (!user?.uid || !chatId) return;
+                const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
+                await updateDoc(chatRef, { 
+                    [`participantsData.${user.uid}.lastRead`]: new Date().toISOString()
+                });
+            }, [user?.uid, chatId]);
+
+            useEffect(() => {
+                if(!chatId) return;
+                const q = query(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), orderBy('createdAt', 'desc')); 
+                const unsub = onSnapshot(q, s => {
+                    setMessages(s.docs.map(d => ({id: d.id, ...d.data(), chatId})) 
+                );
+                markAsRead();
+                });
+                markAsRead();
+                return () => unsub();
+            }, [chatId, markAsRead]);
+            
+            useEffect(() => {
+                if (endRef.current) {
+                    endRef.current.scrollIntoView({ behavior: 'smooth' }); 
+                }
+            }, [messages.length, chatId]); 
+            
+            useEffect(() => {
+                if(!chatId) return;
+                const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
+                return onSnapshot(chatRef, (snap) => {
+                    const typingUser = snap.data().typing;
+                    if (typingUser && typingUser !== user?.uid) {
+                        setIsTyping(true);
+                    } else {
+                        setIsTyping(false);
+                    }
+                });
+            }, [chatId]);
+            
+            const setTypingStatus = (status) => {
+                const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
+                updateDoc(chatRef, { typing: status ? user?.uid : null }).catch(console.error);
+            };
+
+            const handleTextChange = (e) => {
+                setTxt(e.target.value);
+                e.target.style.height = 'auto';
+                e.target.style.height = e.target.scrollHeight + 'px';
+
+                if (e.target.value.length > 0) {
+                    if (!typingTimerRef.current) {
+                        setTypingStatus(true);
+                    }
+                    clearTimeout(typingTimerRef.current);
+                    typingTimerRef.current = setTimeout(() => {
+                        setTypingStatus(false);
+                        typingTimerRef.current = null;
+                    }, 3000);
+                } else {
+                    clearTimeout(typingTimerRef.current);
+                    setTypingStatus(false);
+                    typingTimerRef.current = null;
+                }
+            };
+            
+            useEffect(() => {
+                return () => {
+                    clearTimeout(typingTimerRef.current);
+                    if (auth.currentUser) setTypingStatus(false);
+                };
+            }, [chatId]);
+            
+            const updateStreak = async (lastMessageTime) => {
+                if (!user?.uid) return;
+                const chatRef = doc(db, 'artifacts', appId, 'chats', chatId);
+                const snap = await getDoc(chatRef);
+                if (!snap.exists()) return;
+
+                const chatData = snap.data();
+                const now = new Date(lastMessageTime).getTime();
+                
+                const lastTime = chatData.streak ? new Date(chatData.streak.lastMessageTime).getTime() : 0;
+                const lastSender = chatData.streak ? chatData.streak.lastSenderId : null;
+                const currentCount = chatData.streak ? chatData.streak.count : 0;
+                
+                const isWithin24Hours = (now - lastTime) < 86400000; 
+                const streakLost = (now - lastTime) >= 86400000;
+
+                let newCount = currentCount;
+
+                if (currentCount === 0) { newCount = 1; } else if (isWithin24Hours && lastSender !== user.uid) { newCount = currentCount + 1; } else if (streakLost) { newCount = 1; } else if (lastSender === user.uid) { newCount = currentCount; }
+                await updateDoc(chatRef, { streak: { count: newCount, lastMessageTime: new Date(lastMessageTime).toISOString(), lastSenderId: user.uid }, lastMessageTime: new Date(lastMessageTime).toISOString(), lastSenderId: user.uid });
+            };
+            
+            const updateMessageAudioUrl = async (messageId, newUrl) => {
+                const messageRef = doc(db, 'artifacts', appId, 'chats', chatId, 'messages', messageId);
+                await updateDoc(messageRef, { fileUrl: newUrl, type: 'audio_tts' });
+            };
+
+
+            const sendMessage = async (type, content, extraData = {}) => {
+                if (!user?.uid) return; 
+                
+                const messageTime = new Date().toISOString();
+
+                const message = {
+                    type,
+                    senderId: user.uid,
+                    createdAt: messageTime,
+                    ...(type === 'text' || type === 'audio_tts' ? { text: content } : { fileUrl: content }),
+                    ...extraData, 
+                    ...(replyTo ? { replyTo: { text: replyTo.text, type: replyTo.type, senderId: replyTo.senderId } } : {}),
+                };
+
+                await addDoc(collection(db, 'artifacts', appId, 'chats', chatId, 'messages'), message);
+                await updateStreak(messageTime); 
+                setTypingStatus(false); 
+                
+                const chatDoc = await getDoc(doc(db, 'artifacts', appId, 'chats', chatId));
+                const participants = chatDoc.data().participants;
+                const receiverId = participants.find(id => id !== user.uid);
+                
+                if (receiverId) {
+                    const userData = (await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid))).data();
+                    await addDoc(collection(db, 'artifacts', appId, 'users', receiverId, 'notifications'), {
+                        type: 'message', 
+                        fromUser: user.uid, 
+                        fromName: userData.displayName, 
+                        avatar: userData.photoURL, 
+                        createdAt: messageTime 
+                    });
+                }
+            };
+            
+            const handleStickerSelect = (url) => {
+                sendMessage('sticker', url);
+                setShowStickerModal(false);
+            };
+            
+            const handleSendGameInvite = (gameName, inviteLink, message) => {
+                const data = { gameName, inviteLink, message };
+                sendMessage('game_invite', data);
+                setShowGameInviteModal(false);
+            };
+
+            const sendTextOrAudio = () => {
+                if(!txt.trim()) return;
+                sendMessage('text', txt.trim());
+                setTxt("");
+                setReplyTo(null);
+            };
+
+            const handleFileSelect = (e) => {
+                const selectedFile = e.target.files[0];
+                if (selectedFile) {
+                    setFile(selectedFile);
+                    setPreview(URL.createObjectURL(selectedFile));
+                }
+            };
+            
+            const clearFile = () => {
+                setFile(null);
+                setPreview(null);
+            };
+
+            const sendFile = async () => {
+                if (!user?.uid || !file) return; 
+                
+                const fileName = file.name || "file.bin";
+                const fileExtension = fileName.split('.').pop().toLowerCase();
+                
+                let fileType = 'file'; 
+                if (['png', 'jpg', 'jpeg', 'gif'].includes(fileExtension)) fileType = 'image';
+                else if (['mp3', 'wav', 'ogg', 'webm'].includes(fileExtension)) fileType = 'audio';
+                else if (['mp4', 'mov', 'avi'].includes(fileExtension)) fileType = 'video';
+                
+                const path = `chats/${chatId}/${Date.now()}_${fileName.replace(/[^a-zA-Z0-9.]/g,'')}`;
+                
+                try {
+                    const url = await uploadToGitHub(file, path, (s) => console.log(s));
+                    sendMessage(fileType, url, { fileType, text: txt });
+                } catch(e) {
+                    console.error("Error al subir archivo:", e.message);
+                } finally {
+                    setFile(null);
+                    setPreview(null);
+                    setTxt("");
+                    setReplyTo(null);
+                }
+            };
+            
+            const startRecording = async () => {
+                if (isRecording || !user?.uid) return;
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const options = { mimeType: 'audio/webm' }; 
+                    const recorder = new MediaRecorder(stream, options);
+                    mediaRecorderRef.current = recorder;
+                    audioChunksRef.current = [];
+                    recorder.ondataavailable = (event) => { audioChunksRef.current.push(event.data); };
+                    recorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+                        const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: 'audio/webm' });
+                        const path = `chats/${chatId}/${Date.now()}_audio.webm`;
+                         const url = await uploadToGitHub(audioFile, path, (s) => console.log(s));
+                         sendMessage('audio', url, { fileType: 'audio' });
+                        stream.getTracks().forEach(track => track.stop()); 
+                    };
+                    recorder.start();
+                    setIsRecording(true);
+                } catch (err) {
+                    console.error('Error al acceder al micrófono:', err.message);
+                    setIsRecording(false);
+                }
+            };
+            
+            const stopRecording = () => {
+                if (mediaRecorderRef.current && isRecording) {
+                    mediaRecorderRef.current.stop();
+                    setIsRecording(false);
+                }
+            };
+
+            const deleteMsg = async (msgId) => {
+                await deleteDoc(doc(db, 'artifacts', appId, 'chats', chatId, 'messages', msgId));
+            };
+            
+            const handleKeyDown = (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault(); 
+                    if (file) {
+                        sendFile();
+                    } else if (txt.trim()) {
+                        sendTextOrAudio();
+                    }
+                }
+            };
+
+            const isSendButtonVisible = !!file || txt.trim().length > 0;
+
+            return (
+                <div className="absolute inset-0 z-50 bg-gray-900 flex flex-col animate-in slide-in-from-right h-[100dvh]">
+                    <div className="p-4 bg-gray-900 border-b border-gray-800 flex items-center gap-3">
+                        <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-800 transition"><ArrowLeft className="text-white"/></button>
+                        
+                        <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
+                                <img src={otherUser?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${otherUser?.uid}`} className="w-full h-full object-cover"/>
+                            </div>
+                            <span className="font-bold text-white text-lg">{otherUser?.displayName || "Chat Privado"}</span>
+                            {otherUser?.isVerified && <VerifiedBadge size={16} />}
+                        </div>
+                    </div>
+                    
+                    <div className="message-list-container">
+                        <div ref={endRef} />
+                        <div className="message-list-content">
+                            {messages.slice().reverse().map((m) => ( 
+                                <MessageBubble 
+                                    key={m.id} 
+                                    message={m} 
+                                    isMe={m.senderId === user?.uid} 
+                                    onDelete={deleteMsg}
+                                    onReply={setReplyTo}
+                                    videos={videos}
+                                    onUpdateAudioUrl={updateMessageAudioUrl}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                    
+                    {isTyping && (
+                        <div className="px-4 py-2">
+                            <div className="flex justify-start">
+                                <div className="max-w-[70%] p-3 rounded-2xl text-sm bg-gray-800 text-white flex items-center gap-2">
+                                    <span className="text-gray-300 italic text-xs">Escribiendo</span>
+                                    <div className="typing-indicator">
+                                        <span className="typing-dot"></span>
+                                        <span className="typing-dot"></span>
+                                        <span className="typing-dot"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    
+                    <div className="p-3 bg-gray-900 border-t border-gray-800 flex flex-col gap-2">
+                        {replyTo && (
+                            <div className="flex items-center justify-between p-2 bg-gray-800 rounded-lg text-sm border-l-4 border-cyan-400">
+                                <span className="text-gray-300 italic truncate">Respondiendo a: {replyTo.text || replyTo.type}</span>
+                                <button onClick={() => setReplyTo(null)} className="text-red-400 ml-2"><X size={16}/></button>
+                            </div>
+                        )}
+
+                        {file && (
+                            <div className="relative bg-gray-800 rounded-xl p-2 flex items-center gap-3 border border-gray-700 animate-in slide-in-from-bottom-2">
+                                <div className="w-12 h-12 bg-gray-700 rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0">
+                                    {file.type.startsWith('image/') ? (
+                                        <img src={preview} className="w-full h-full object-cover" />
+                                    ) : file.type.startsWith('video/') ? (
+                                        <video src={preview} className="w-full h-full object-cover" />
+                                    ) : (
+                                        <Paperclip size={20} className="text-gray-400" />
+                                    )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-white truncate font-medium">{file.name}</p>
+                                    <p className="text-xs text-gray-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                                </div>
+                                <button onClick={clearFile} className="p-1.5 bg-gray-700 rounded-full hover:bg-red-500/20 hover:text-red-500 transition">
+                                    <X size={16} />
+                                </button>
+                            </div>
+                        )}
+
+                        <div className="flex gap-2 items-end"> 
+                            
+                            <button 
+                                onClick={() => setShowStickerModal(true)}
+                                className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0"
+                            >
+                                <Smile size={20}/>
+                            </button>
+                            
+                            <button 
+                                onClick={() => setShowGameInviteModal(true)}
+                                className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0"
+                            >
+                                <Gamepad size={20} className="text-cyan-400"/>
+                            </button>
+                            
+                            <label className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-gray-700 transition flex-shrink-0">
+                                <Paperclip size={18}/>
+                                <input type="file" className="hidden" onChange={handleFileSelect} />
+                            </label>
+
+                            <textarea
+                                value={txt} 
+                                onChange={handleTextChange} 
+                                className="chat-input flex-1 bg-gray-800 text-white p-3 rounded-2xl outline-none resize-none max-h-40" 
+                                placeholder={file ? "Añade un comentario..." : "Mensaje..."} 
+                                onKeyDown={handleKeyDown}
+                                disabled={isRecording}
+                                rows={1} 
+                            />
+                            
+                            <div className="flex flex-col gap-2 items-center flex-shrink-0">
+                                
+                                {isSendButtonVisible ? (
+                                    <>
+                                        {txt.trim() && txt.trim().length > 100 && !file && (
+                                            <button 
+                                                onClick={sendTextOrAudio} 
+                                                className="w-10 h-10 bg-cyan-600 rounded-full text-white hover:bg-cyan-500 transition shadow-lg flex items-center justify-center"
+                                                title="Enviar como Audio (TTS)"
+                                            >
+                                                <Mic size={18}/>
+                                            </button>
+                                        )}
+                                        
+                                        <button onClick={file ? () => sendFile() : sendTextOrAudio} 
+                                            className="w-10 h-10 p-2 bg-white rounded-full text-black flex items-center justify-center hover:bg-gray-200 transition shadow-lg">
+                                            <Send size={18}/>
+                                        </button>
+                                    </>
+                                ) : (
+                                    <button 
+                                        onMouseDown={startRecording}
+                                        onMouseUp={stopRecording}
+                                        onTouchStart={startRecording}
+                                        onTouchEnd={stopRecording}
+                                        className={`w-10 h-10 p-2 rounded-full transition-all flex items-center justify-center shadow-lg
+                                            ${isRecording ? 'bg-red-500 scale-110 text-white' : 'bg-gray-800 text-white hover:bg-gray-700'}`}
+                                    >
+                                        <Mic size={18}/>
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                    <StickerModal 
+                        isOpen={showStickerModal} 
+                        onClose={() => setShowStickerModal(false)} 
+                        onSelectSticker={handleStickerSelect}
+                    />
+                    <GameInviteModal 
+                        isOpen={showGameInviteModal} 
+                        onClose={() => setShowGameInviteModal(false)} 
+                        onSendInvite={handleSendGameInvite}
+                    />
+                </div>
+            );
         };
 
         // ... (Resto del componente App y renderizado igual)
@@ -1664,71 +2163,83 @@
                 
                 <div className="relative w-full max-w-md h-full bg-gray-900 shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col border-x border-gray-800 overflow-hidden">
                     
-                    {activeTab === 'home' && (
+                    {/* Contenedor principal de vistas que debe manejar el desplazamiento */}
+                    <div className={`flex-1 flex flex-col ${activeTab === 'home' ? 'overflow-hidden' : 'overflow-y-auto'}`}> 
+                    
+                        {/* Encabezado fijo superior para la navegación principal */}
                         <div className="absolute top-0 w-full p-4 pt-8 z-30 flex justify-center gap-4 bg-gradient-to-b from-gray-900/80 to-transparent pointer-events-none backdrop-blur-[1px]">
                             
-                            {/* NUEVO: Botón Live */}
-                            <a 
-                                href="https://www.livepayout.org/" 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="font-bold text-base cursor-pointer pointer-events-auto text-red-500 border-b-2 border-red-500 pb-1"
-                            >
-                                LIVE
-                            </a>
+                            {activeTab === 'home' && (
+                                <>
+                                    {/* NUEVO: Botón Live */}
+                                    <a 
+                                        href="https://www.livepayout.org/" 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="font-bold text-base cursor-pointer pointer-events-auto text-red-500 border-b-2 border-red-500 pb-1"
+                                    >
+                                        LIVE
+                                    </a>
 
-                            <span className={`font-bold text-base cursor-pointer pointer-events-auto ${feedMode==='profile'?'text-gray-400':'text-white border-b-2 border-white pb-1'}`} onClick={goHome}>Para Ti</span>
-                            {feedMode === 'profile' && <span className="font-bold text-white border-b-2 pointer-events-auto pb-1">Viendo Perfil</span>}
+                                    <span className={`font-bold text-base cursor-pointer pointer-events-auto ${feedMode==='profile'?'text-gray-400':'text-white border-b-2 border-white pb-1'}`} onClick={goHome}>Para Ti</span>
+                                    {feedMode === 'profile' && <span className="font-bold text-white border-b-2 pointer-events-auto pb-1">Viendo Perfil</span>}
+                                </>
+                            )}
                         </div>
-                    )}
 
-                    <div 
-                        ref={feedRef} 
-                        onScroll={handleScroll} 
-                        className={`flex-1 overflow-y-scroll snap-y snap-mandatory no-scrollbar bg-gray-900 ${activeTab !== 'home' ? 'hidden' : ''}`}
-                    >
-                        {currentFeedVideos.length > 0 ? currentFeedVideos.map((v, i) => (
-                            <VideoPlayer 
-                                key={v.id} 
-                                video={v} 
-                                isActive={i === currentIndex && activeTab === 'home'} 
-                                toggleLike={toggleLike} 
-                                onShare={(id) => setShowShare(id)} 
-                                onVisitProfile={goToProfile}
-                                onOpenComments={openComments} 
-                                userProfile={userProfile} // Pasamos el perfil del usuario para mostrar el balance
+                        {activeTab === 'home' && (
+                            <div 
+                                ref={feedRef} 
+                                onScroll={handleScroll} 
+                                className="flex-1 overflow-y-scroll snap-y snap-mandatory no-scrollbar bg-gray-900 pt-[60px]" // Espacio para el encabezado
+                            >
+                                {currentFeedVideos.length > 0 ? currentFeedVideos.map((v, i) => (
+                                    <VideoPlayer 
+                                        key={v.id} 
+                                        video={v} 
+                                        isActive={i === currentIndex && activeTab === 'home'} 
+                                        toggleLike={toggleLike} 
+                                        onShare={(id) => setShowShare(id)} 
+                                        onVisitProfile={goToProfile}
+                                        onOpenComments={openComments} 
+                                        userProfile={userProfile} 
+                                    />
+                                )) : <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-white/50"/></div>}
+                            </div>
+                        )}
+
+                        {/* Las vistas que manejan su propio scroll deben tener un padding/margen superior si se comparte el encabezado,
+                           pero como lo hemos ocultado, solo necesitan la clase h-full */}
+
+                        {activeTab === 'trends' && <TrendsView videos={videos} onVideoClick={openProfileVideo} onVisitProfile={goToProfile} />}
+
+                        {activeTab === 'profile' && (
+                            <ProfileView 
+                                targetUserId={viewingProfile || user.uid} 
+                                currentUser={user} 
+                                videos={videos} 
+                                onBack={() => {
+                                    if(feedMode === 'profile') setActiveTab('home');
+                                    else { setViewingProfile(null); setActiveTab('home'); }
+                                }} 
+                                onVideoClick={(id) => openProfileVideo({id, authorId: viewingProfile || user.uid})}
+                                onLogout={() => signOut(auth)}
+                                onChat={startChat}
                             />
-                        )) : <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-white/50"/></div>}
-                    </div>
+                        )}
 
-                    {activeTab === 'trends' && <TrendsView videos={videos} onVideoClick={openProfileVideo} onVisitProfile={goToProfile} />}
-
-                    {activeTab === 'profile' && (
-                        <ProfileView 
-                            targetUserId={viewingProfile || user.uid} 
-                            currentUser={user} 
-                            videos={videos} 
-                            onBack={() => {
-                                if(feedMode === 'profile') setActiveTab('home');
-                                else { setViewingProfile(null); setActiveTab('home'); }
-                            }} 
-                            onVideoClick={(id) => openProfileVideo({id, authorId: viewingProfile || user.uid})}
-                            onLogout={() => signOut(auth)}
-                            onChat={startChat}
-                        />
-                    )}
-
-                    {activeTab === 'inbox' && (
-                        <InboxView user={user} onOpenChat={openChat} notifications={notifications} chats={chats} onlineStatus={onlineStatus} />
-                    )}
+                        {activeTab === 'inbox' && (
+                            <InboxView user={user} onOpenChat={openChat} notifications={notifications} chats={chats} onlineStatus={onlineStatus} />
+                        )}
+                    
+                    </div> {/* Fin del contenedor flex-1 */}
 
                     <div className="bg-gray-900/95 border-t border-gray-500 p-2 flex justify-around items-center z-40 pb-5 backdrop-blur-xl h-[80px]">
-                        <button onClick={goHome} className={`flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-100`}>
+                        <button onClick={goHome} className={`flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 ${activeTab==='home'?'opacity-100':'opacity-50 hover:opacity-100'}`}>
                             <Home size={26} strokeWidth={activeTab==='home'?3:2} className="text-white fill-white"/><span className="text-[10px] font-medium text-white">Inicio</span>
                         </button>
-                        <button onClick={() => setActiveTab('trends')} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
-                            <img src={ICONS.tendencia} className="w-7 h-7 invert"/>
-                            <span className="text-[10px] font-medium text-white">Tendencias</span>
+                        <button onClick={() => setActiveTab('trends')} className={`flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 ${activeTab==='trends'?'opacity-100':'opacity-50 hover:opacity-100'}`}>
+                            <img src={ICONS.tendencia} className="w-7 h-7 invert"/><span className="text-[10px] font-medium text-white">Tendencias</span>
                         </button>
                         
                         <button onClick={() => setShowUpload(true)} className="relative -top-1 cursor-pointer group mx-2">
@@ -1738,7 +2249,7 @@
                             </div>
                         </button>
 
-                        <button onClick={()=>setActiveTab('inbox')} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100 relative">
+                        <button onClick={()=>setActiveTab('inbox')} className={`flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 ${activeTab==='inbox'?'opacity-100':'opacity-50 hover:opacity-100'} relative`}>
                             <img src={ICONS.bandeja} className="w-7 h-7 invert"/>
                             <span className="text-[10px] font-medium text-white">Bandeja</span>
                             {getUnreadMessagesCount(chats, user.uid) > 0 && (
@@ -1747,7 +2258,7 @@
                                 </span>
                             )}
                         </button>
-                        <button onClick={()=>{setViewingProfile(null); setActiveTab('profile')}} className="flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 opacity-50 hover:opacity-100">
+                        <button onClick={()=>{setViewingProfile(null); setActiveTab('profile')}} className={`flex flex-col items-center gap-1 w-14 cursor-pointer transition active:scale-90 ${activeTab==='profile'?'opacity-100':'opacity-50 hover:opacity-100'}`}>
                             <img src={ICONS.perfil} className="w-7 h-7 invert"/>
                             <span className="text-[10px] font-medium text-white">Perfil</span>
                         </button>
