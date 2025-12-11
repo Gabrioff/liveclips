@@ -551,19 +551,22 @@
                     const authorQuery = query(collection(db, "users"), where("authUid", "==", video.authorId), limit(1));
                     const authorSnap = await getDocs(authorQuery);
                     
-                    if (authorSnap.empty) throw new Error("Autor no encontrado en base de datos unificada.");
-                    const authorDoc = authorSnap.docs[0];
-                    const authorWallet = authorDoc.id; // La wallet es el ID del documento
-                    
-                    // Wallet del remitente (currentUserProfile.id es la wallet)
-                    const senderWallet = currentUserProfile.id;
+                    if (!authorSnap.empty) {
+                        const authorDoc = authorSnap.docs[0];
+                        const authorWallet = authorDoc.id; // La wallet es el ID del documento
+                        
+                        // Wallet del remitente (currentUserProfile.id es la wallet)
+                        const senderWallet = currentUserProfile.id;
 
-                    await runTransaction(db, async (t) => {
-                        const senderRef = doc(db, 'users', senderWallet);
-                        const authorRef = doc(db, 'users', authorWallet);
-                        t.update(senderRef, { bitBalance: increment(-gift.price) });
-                        t.update(authorRef, { bitBalance: increment(gift.price) });
-                    });
+                        await runTransaction(db, async (t) => {
+                            const senderRef = doc(db, 'users', senderWallet);
+                            const authorRef = doc(db, 'users', authorWallet);
+                            t.update(senderRef, { bitBalance: increment(-gift.price) });
+                            t.update(authorRef, { bitBalance: increment(gift.price) });
+                        });
+                    } else {
+                        console.warn("Autor no encontrado en base de datos unificada. Enviando regalo visualmente sin transacción.");
+                    }
                     
                     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'videos', video.id, 'comments'), {
                         type: 'gift', authorId: user.uid, authorName: currentUserProfile.username, authorUsername: currentUserProfile.username,
